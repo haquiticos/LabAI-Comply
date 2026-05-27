@@ -1,4 +1,6 @@
-# LabAI-Comply
+# LabAI-Comply 
+> **Em desenvolvimento...**
+
 
 **Infraestrutura de IA para pesquisa científica — com conformidade CNPq automática.**
 
