@@ -1,0 +1,3 @@
+FROM mcr.microsoft.com/presidio-analyzer:latest
+RUN pip install --no-cache-dir spacy && \
+    python -m spacy download pt_core_news_sm

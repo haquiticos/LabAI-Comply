@@ -1,0 +1,8 @@
+---
+presidio_analyzer_container: "presidio-analyzer"
+presidio_anonymizer_container: "presidio-anonymizer"
+presidio_analyzer_image: "mcr.microsoft.com/presidio-analyzer:latest"
+presidio_anonymizer_image: "mcr.microsoft.com/presidio-anonymizer:latest"
+presidio_language: "pt"
+presidio_score_threshold: 0.5
+presidio_memory_limit: "2g"

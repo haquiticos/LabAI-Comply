@@ -1,0 +1,6 @@
+---
+gateway_port: 8000
+gateway_max_body_mb: 10
+gateway_request_timeout: 120
+gateway_memory_limit: "1g"
+gateway_log_level: "info"

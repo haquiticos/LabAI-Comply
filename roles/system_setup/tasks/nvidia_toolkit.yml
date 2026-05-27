@@ -1,0 +1,62 @@
+---
+- name: Check if nvidia-container-toolkit is already installed
+  ansible.builtin.command: nvidia-ctk --version
+  register: _nvidia_ctk_check
+  changed_when: false
+  failed_when: false
+  tags: [system]
+
+- name: Add NVIDIA repository GPG key
+  become: true
+  ansible.builtin.apt_key:
+    url: https://nvidia.github.io/libnvidia-container/gpgkey
+    state: present
+  when: _nvidia_ctk_check.rc != 0
+  tags: [system]
+
+- name: Add NVIDIA container toolkit repository
+  become: true
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://nvidia.github.io/libnvidia-container/stable/deb/{{ ansible_distribution | lower }}{{ ansible_distribution_version }} {{ ansible_lsb.codename }}"
+    state: present
+    filename: nvidia-container-toolkit
+  when: _nvidia_ctk_check.rc != 0
+  tags: [system]
+
+- name: Install nvidia-container-toolkit
+  become: true
+  ansible.builtin.apt:
+    name: nvidia-container-toolkit
+    state: present
+    update_cache: true
+  when: _nvidia_ctk_check.rc != 0
+  tags: [system]
+
+- name: Configure Docker daemon for NVIDIA runtime
+  become: true
+  ansible.builtin.command: nvidia-ctk runtime configure --runtime=docker
+  when: _nvidia_ctk_check.rc != 0
+  changed_when: true
+  notify: Restart docker
+  tags: [system]
+
+- name: Restart Docker service after NVIDIA runtime configuration
+  become: true
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+  when: _nvidia_ctk_check.rc != 0
+  tags: [system]
+
+- name: Verify GPU visibility in Docker
+  ansible.builtin.command: >
+    docker run --rm --gpus all nvidia/cuda:12.0.0-base-ubuntu22.04 nvidia-smi
+  register: _gpu_verify
+  changed_when: false
+  failed_when: false
+  tags: [system]
+
+- name: Display GPU verification result
+  ansible.builtin.debug:
+    msg: "GPU visibility in Docker: {{ 'OK' if _gpu_verify.rc == 0 else 'FAILED (GPU may not be available)' }}"
+  tags: [system]

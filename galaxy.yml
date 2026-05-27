@@ -1,0 +1,30 @@
+---
+namespace: labai
+name: comply
+version: 4.1.0
+readme: README.md
+authors:
+  - LabAI-Comply Team
+description: >
+  Infraestrutura de IA para pesquisa cientifica em conformidade com o CNPq
+  (Portaria 2.664/2026). Provisiona AnythingLLM + Ollama + Presidio + FastAPI Gateway
+  com rastreabilidade automatica para relatorios de uso de IA.
+license:
+  - MIT
+tags:
+  - ai
+  - infrastructure
+  - compliance
+  - cnpq
+  - research
+  - ollama
+  - presidio
+  - anythingllm
+dependencies:
+  community.docker: ">=3.0.0"
+repository: https://github.com/labai/comply
+build_ignore:
+  - "*.pyc"
+  - "__pycache__"
+  - ".git"
+  - ".gitignore"

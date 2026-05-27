@@ -1,0 +1,145 @@
+networks:
+  labai_net:
+    external: true
+    name: labai_net
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "{{ ollama_port | default(11434) }}:11434"
+    networks:
+      - labai_net
+    volumes:
+      - /opt/labai/ollama:/root/.ollama
+    environment:
+      - OLLAMA_NUM_PARALLEL={{ ollama_num_parallel | default(4) }}
+      - OLLAMA_KEEP_ALIVE={{ ollama_keep_alive | default('30m') }}
+    deploy:
+      resources:
+        limits:
+          memory: {{ ollama_ram_limit | default('26g') }}
+          cpus: "{{ (ansible_processor_vcpus | default(4)) - 1 }}"
+{% if ollama_gpu_enabled | default(false) | bool %}
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+{% endif %}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  presidio-analyzer:
+    build:
+      context: /opt/labai/presidio
+      dockerfile: Dockerfile
+    container_name: presidio-analyzer
+    restart: unless-stopped
+    ports:
+      - "5002:5002"
+    networks:
+      - labai_net
+    environment:
+      - PRESIDIO_LANGUAGE={{ presidio_language | default('pt') }}
+    deploy:
+      resources:
+        limits:
+          memory: {{ presidio_memory_limit | default('2g') }}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+
+  presidio-anonymizer:
+    image: mcr.microsoft.com/presidio-anonymizer:latest
+    container_name: presidio-anonymizer
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    networks:
+      - labai_net
+    deploy:
+      resources:
+        limits:
+          memory: {{ presidio_memory_limit | default('2g') }}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  gateway:
+    build:
+      context: /opt/labai/gateway
+      dockerfile: Dockerfile
+    container_name: gateway
+    restart: unless-stopped
+    ports:
+      - "{{ gateway_port | default(8000) }}:8000"
+    networks:
+      - labai_net
+    environment:
+      - OPENAI_API_KEY={{ openai_api_key | default('') }}
+      - OLLAMA_MODEL_SELECTED={{ ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M') }}
+      - GATEWAY_LOG_LEVEL={{ gateway_log_level | default('info') }}
+      - GATEWAY_MAX_BODY_MB={{ gateway_max_body_mb | default(10) }}
+      - GATEWAY_REQUEST_TIMEOUT={{ gateway_request_timeout | default(120) }}
+      - AUDIT_LOG_PATH=/var/log/gateway/audit.jsonl
+      - WORKSPACE_REGISTRY_PATH=/app/workspace_registry.yml
+    deploy:
+      resources:
+        limits:
+          memory: {{ gateway_memory_limit | default('1g') }}
+          cpus: "2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - /opt/labai/gateway/workspace_registry.yml:/app/workspace_registry.yml:ro
+      - /var/log/gateway:/var/log/gateway
+    depends_on:
+      ollama:
+        condition: service_healthy
+      presidio-analyzer:
+        condition: service_healthy
+      presidio-anonymizer:
+        condition: service_healthy
+
+  anythingllm:
+    image: mintplexlabs/anythingllm:latest
+    container_name: anythingllm
+    restart: unless-stopped
+    ports:
+      - "{{ anythingllm_port | default(3000) }}:3000"
+    networks:
+      - labai_net
+    deploy:
+      resources:
+        limits:
+          memory: {{ anythingllm_memory_limit | default('4g') }}
+    environment:
+      - OPEN_AI_KEY=
+      - OPENAI_API_BASE_URL=http://gateway:8000/cloud
+      - EMBEDDING_ENGINE=local
+      - VECTOR_DB=lancedb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/system"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    volumes:
+      - /opt/labai/anythingllm/storage:/app/server/storage
+    depends_on:
+      gateway:
+        condition: service_healthy

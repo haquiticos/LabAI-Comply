@@ -1,0 +1,6 @@
+---
+audit_retention_days: 90
+audit_log_path: "/var/log/gateway/audit.jsonl"
+audit_report_dir: "/var/log/gateway/reports"
+audit_anomaly_threshold_multiplier: 2
+audit_failure_threshold: 10

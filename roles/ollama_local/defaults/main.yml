@@ -1,0 +1,9 @@
+---
+ollama_container_name: "ollama"
+ollama_image: "ollama/ollama:latest"
+ollama_port: 11434
+ollama_ram_limit: "26g"
+ollama_keep_alive: "30m"
+ollama_num_parallel: 4
+ollama_gpu_enabled: false
+ollama_model_selected: "qwen2.5:14b-instruct-q4_K_M"

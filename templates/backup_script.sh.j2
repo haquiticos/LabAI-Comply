@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+BACKUP_DIR="{{ backup_dir }}"
+BACKUP_OLLAMA="{{ backup_ollama_model | default('false') }}"
+DATE=$(date +%Y-%m-%d)
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+ARCHIVE_NAME="labai_backup_${DATE}"
+DAILY_DIR="${BACKUP_DIR}/daily"
+WEEKLY_DIR="${BACKUP_DIR}/weekly"
+MONTHLY_DIR="${BACKUP_DIR}/monthly"
+
+TEMP_DIR=$(mktemp -d /tmp/labai_backup_${TIMESTAMP}_XXXXXX)
+
+cleanup() {
+    rm -rf "${TEMP_DIR}"
+}
+trap cleanup EXIT
+
+mkdir -p "${TEMP_DIR}/labai_backup"
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting LabAI backup for ${DATE}"
+
+STAGING="${TEMP_DIR}/labai_backup"
+
+if [ -d "/opt/labai/anythingllm/storage" ]; then
+    cp -a /opt/labai/anythingllm/storage "${STAGING}/anythingllm_storage"
+fi
+
+if [ -f "/var/log/gateway/audit.jsonl" ]; then
+    cp -a /var/log/gateway/audit.jsonl "${STAGING}/audit.jsonl"
+fi
+
+if [ -d "/opt/labai/config" ]; then
+    cp -a /opt/labai/config "${STAGING}/config"
+fi
+
+if [ -f "/etc/nginx/sites-available/anythingllm" ]; then
+    mkdir -p "${STAGING}/nginx"
+    cp -a /etc/nginx/sites-available/anythingllm "${STAGING}/nginx/anythingllm"
+fi
+
+if [ -d "/opt/labai/tls" ]; then
+    cp -a /opt/labai/tls "${STAGING}/tls"
+fi
+
+if [ -f "/opt/labai/gateway/workspace_registry.yml" ]; then
+    mkdir -p "${STAGING}/gateway"
+    cp -a /opt/labai/gateway/workspace_registry.yml "${STAGING}/gateway/workspace_registry.yml"
+fi
+
+if [ "${BACKUP_OLLAMA}" = "true" ] && [ -d "/opt/labai/ollama" ]; then
+    cp -a /opt/labai/ollama "${STAGING}/ollama"
+fi
+
+ARCHIVE_PATH="${DAILY_DIR}/${ARCHIVE_NAME}.tar.gz"
+tar -czf "${ARCHIVE_PATH}" -C "${TEMP_DIR}" labai_backup
+
+pushd "${DAILY_DIR}" > /dev/null
+sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.sha256"
+popd > /dev/null
+
+ls -1t "${DAILY_DIR}"/labai_backup_*.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm -f
+ls -1t "${DAILY_DIR}"/labai_backup_*.sha256 2>/dev/null | tail -n +8 | xargs -r rm -f
+
+DAY_OF_WEEK=$(date +%u)
+if [ "${DAY_OF_WEEK}" -eq 7 ]; then
+    cp "${ARCHIVE_PATH}" "${WEEKLY_DIR}/"
+    cp "${DAILY_DIR}/${ARCHIVE_NAME}.sha256" "${WEEKLY_DIR}/"
+    ls -1t "${WEEKLY_DIR}"/labai_backup_*.tar.gz 2>/dev/null | tail -n +5 | xargs -r rm -f
+    ls -1t "${WEEKLY_DIR}"/labai_backup_*.sha256 2>/dev/null | tail -n +5 | xargs -r rm -f
+fi
+
+DAY_OF_MONTH=$(date +%d)
+if [ "${DAY_OF_MONTH}" -eq "01" ]; then
+    cp "${ARCHIVE_PATH}" "${MONTHLY_DIR}/"
+    cp "${DAILY_DIR}/${ARCHIVE_NAME}.sha256" "${MONTHLY_DIR}/"
+    ls -1t "${MONTHLY_DIR}"/labai_backup_*.tar.gz 2>/dev/null | tail -n +4 | xargs -r rm -f
+    ls -1t "${MONTHLY_DIR}"/labai_backup_*.sha256 2>/dev/null | tail -n +4 | xargs -r rm -f
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Backup complete: ${ARCHIVE_PATH}"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checksum: ${DAILY_DIR}/${ARCHIVE_NAME}.sha256"

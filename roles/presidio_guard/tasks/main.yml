@@ -1,0 +1,121 @@
+---
+- name: Ensure Presidio build directory exists
+  ansible.builtin.file:
+    path: /opt/labai/presidio
+    state: directory
+    mode: "0755"
+  tags: [presidio]
+
+- name: Create custom Presidio analyzer Dockerfile with spaCy Portuguese model
+  ansible.builtin.copy:
+    dest: /opt/labai/presidio/Dockerfile
+    content: |
+      FROM mcr.microsoft.com/presidio-analyzer:latest
+      RUN pip install spacy && python -m spacy download pt_core_news_sm
+    mode: "0644"
+  register: _presidio_dockerfile
+  tags: [presidio]
+
+- name: Check if presidio-analyzer-pt image exists
+  ansible.builtin.shell: docker image inspect presidio-analyzer-pt > /dev/null 2>&1 && echo "exists" || echo "missing"
+  register: _presidio_image_check
+  changed_when: false
+  tags: [presidio]
+
+- name: Build custom Presidio analyzer image
+  ansible.builtin.shell: >
+    docker build -t presidio-analyzer-pt /opt/labai/presidio/
+  when: _presidio_image_check.stdout == "missing" or _presidio_dockerfile is changed
+  register: _presidio_build
+  tags: [presidio]
+
+- name: Template custom recognizers config
+  ansible.builtin.template:
+    src: presidio_recognizers.yml.j2
+    dest: /opt/labai/presidio/recognizers.yml
+    mode: "0644"
+  tags: [presidio]
+
+- name: Check if Presidio Analyzer container is running
+  ansible.builtin.shell: >
+    docker ps --filter "name={{ presidio_analyzer_container }}"
+    --format '{{ '{{' }}.Status{{ '}}' }}'
+  register: _presidio_analyzer_status
+  changed_when: false
+  tags: [presidio]
+
+- name: Deploy Presidio Analyzer container
+  ansible.builtin.shell: >
+    docker run -d
+    --name {{ presidio_analyzer_container }}
+    --network labai_net
+    --restart unless-stopped
+    --memory {{ presidio_memory_limit }}
+    -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+    --health-cmd "curl -f http://localhost:5002/health"
+    --health-interval 30s
+    --health-timeout 10s
+    --health-retries 3
+    -p 5002:5002
+    -e PRESIDIO_LANGUAGE={{ presidio_language }}
+    presidio-analyzer-pt
+  when: _presidio_analyzer_status.stdout == ""
+  tags: [presidio]
+
+- name: Check if Presidio Anonymizer container is running
+  ansible.builtin.shell: >
+    docker ps --filter "name={{ presidio_anonymizer_container }}"
+    --format '{{ '{{' }}.Status{{ '}}' }}'
+  register: _presidio_anonymizer_status
+  changed_when: false
+  tags: [presidio]
+
+- name: Deploy Presidio Anonymizer container
+  ansible.builtin.shell: >
+    docker run -d
+    --name {{ presidio_anonymizer_container }}
+    --network labai_net
+    --restart unless-stopped
+    --memory {{ presidio_memory_limit }}
+    --health-cmd "curl -f http://localhost:5001/health"
+    --health-interval 30s
+    --health-timeout 10s
+    --health-retries 3
+    -p 5001:5001
+    {{ presidio_anonymizer_image }}
+  when: _presidio_anonymizer_status.stdout == ""
+  tags: [presidio]
+
+- name: Wait for Presidio Analyzer to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:5002/health"
+    method: GET
+  register: _analyzer_health
+  until: _analyzer_health.status == 200
+  retries: 15
+  delay: 5
+  tags: [presidio]
+
+- name: Wait for Presidio Anonymizer to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:5001/health"
+    method: GET
+  register: _anonymizer_health
+  until: _anonymizer_health.status == 200
+  retries: 15
+  delay: 5
+  tags: [presidio]
+
+- name: Verify Presidio Analyzer connectivity
+  ansible.builtin.shell: >
+    curl -s -X POST http://localhost:5002/analyze
+    -H "Content-Type: application/json"
+    -d '{"text":"Meu CPF é 123.456.789-00","language":"pt"}'
+  register: _presidio_verify
+  changed_when: false
+  tags: [presidio]
+
+- name: Display Presidio verification result
+  ansible.builtin.debug:
+    msg: "Presidio Analyzer response: {{ _presidio_verify.stdout }}"
+  tags: [presidio]

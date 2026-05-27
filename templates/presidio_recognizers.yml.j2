@@ -1,0 +1,80 @@
+---
+recognizers:
+  - name: "BR_CPF_Recognizer"
+    entity_type: "BR_CPF"
+    patterns:
+      - name: "CPF with separators"
+        regex: "\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}"
+        score: 0.85
+    context_phrases:
+      - "CPF"
+      - "cadastro de pessoa física"
+      - "número de CPF"
+      - "inscrição"
+    language: "pt"
+
+  - name: "BR_CNPJ_Recognizer"
+    entity_type: "BR_CNPJ"
+    patterns:
+      - name: "CNPJ with separators"
+        regex: "\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
+        score: 0.85
+    context_phrases:
+      - "CNPJ"
+      - "cadastro nacional da pessoa jurídica"
+      - "empresa"
+      - "razão social"
+    language: "pt"
+
+  - name: "BR_RG_Recognizer"
+    entity_type: "BR_RG"
+    patterns:
+      - name: "RG with X digit"
+        regex: "\\d{1,2}\\.?\\d{3}\\.?\\d{3}-[\\dXx]"
+        score: 0.65
+      - name: "RG with state prefix"
+        regex: "(?i)RG\\s*:?\\s*\\d{1,2}\\.?\\d{3}\\.?\\d{3}-?[\\dXx]"
+        score: 0.75
+    context_phrases:
+      - "RG"
+      - "registro geral"
+      - "identidade"
+      - "carteira de identidade"
+      - "documento de identidade"
+    language: "pt"
+
+  - name: "BR_CEP_Recognizer"
+    entity_type: "BR_CEP"
+    patterns:
+      - name: "CEP with hyphen"
+        regex: "\\d{5}-\\d{3}"
+        score: 0.5
+    context_phrases:
+      - "CEP"
+      - "código de endereçamento postal"
+      - "endereço"
+      - "logradouro"
+      - "bairro"
+      - "cidade"
+    language: "pt"
+
+  - name: "BR_PHONE_Recognizer"
+    entity_type: "BR_PHONE"
+    patterns:
+      - name: "Phone with country code and parentheses"
+        regex: "(?:\\+55|55)\\s*\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
+        score: 0.75
+      - name: "Phone with parentheses no country code"
+        regex: "\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
+        score: 0.5
+      - name: "Phone plain digits 10 or 11"
+        regex: "(?<=\\D)\\d{10,11}(?=\\D)"
+        score: 0.3
+    context_phrases:
+      - "telefone"
+      - "celular"
+      - "fone"
+      - "whatsapp"
+      - "tel"
+      - "ligar"
+    language: "pt"

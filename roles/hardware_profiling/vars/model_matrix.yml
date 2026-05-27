@@ -1,0 +1,73 @@
+---
+model_matrix:
+  - profile: "Basico (CPU)"
+    min_ram_mb: 8192
+    max_ram_mb: 16384
+    vram_required_mb: 0
+    options:
+      - tag: "llama3.2:3b-instruct-q4_K_M"
+        disk_gb: 2
+        model_ram_mb: 3072
+      - tag: "gemma2:2b-instruct-q4_K_M"
+        disk_gb: 2
+        model_ram_mb: 2048
+
+  - profile: "Padrao (CPU)"
+    min_ram_mb: 16384
+    max_ram_mb: 32768
+    vram_required_mb: 0
+    options:
+      - tag: "llama3.1:8b-instruct-q4_K_M"
+        disk_gb: 5
+        model_ram_mb: 8192
+      - tag: "qwen2.5:14b-instruct-q4_K_M"
+        disk_gb: 9
+        model_ram_mb: 14336
+
+  - profile: "Avancado (CPU)"
+    min_ram_mb: 65536
+    max_ram_mb: 999999999
+    vram_required_mb: 0
+    options:
+      - tag: "qwen2.5:32b-instruct-q3_K_M"
+        disk_gb: 20
+        model_ram_mb: 32768
+      - tag: "mixtral:8x7b-instruct-q4_K_M"
+        disk_gb: 26
+        model_ram_mb: 49152
+
+  - profile: "GPU Entry"
+    min_ram_mb: 16384
+    max_ram_mb: 999999999
+    vram_required_mb: 8192
+    options:
+      - tag: "llama3.1:8b-instruct-q4_K_M"
+        disk_gb: 5
+        model_ram_mb: 8192
+      - tag: "qwen2.5:14b-instruct-q4_K_M"
+        disk_gb: 9
+        model_ram_mb: 14336
+
+  - profile: "GPU Mid"
+    min_ram_mb: 32768
+    max_ram_mb: 999999999
+    vram_required_mb: 12288
+    options:
+      - tag: "qwen2.5:32b-instruct-q4_K_M"
+        disk_gb: 20
+        model_ram_mb: 32768
+      - tag: "command-r:35b-instruct-q4_K_M"
+        disk_gb: 22
+        model_ram_mb: 35840
+
+  - profile: "GPU High"
+    min_ram_mb: 65536
+    max_ram_mb: 999999999
+    vram_required_mb: 24576
+    options:
+      - tag: "llama3.1:70b-instruct-q4_K_M"
+        disk_gb: 40
+        model_ram_mb: 71680
+      - tag: "qwen2.5:72b-instruct-q4_K_M"
+        disk_gb: 42
+        model_ram_mb: 73728

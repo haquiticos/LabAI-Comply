@@ -1,0 +1,111 @@
+---
+- name: Create gateway directory
+  ansible.builtin.file:
+    path: /opt/labai/gateway/
+    state: directory
+    mode: "0755"
+  tags: [gateway]
+
+- name: Template gateway main.py
+  ansible.builtin.template:
+    src: gateway_main_py.j2
+    dest: /opt/labai/gateway/main.py
+    mode: "0644"
+  register: _gateway_code
+  tags: [gateway]
+
+- name: Template workspace registry
+  ansible.builtin.template:
+    src: gateway_workspace_registry_yml.j2
+    dest: /opt/labai/gateway/workspace_registry.yml
+    mode: "0644"
+  tags: [gateway]
+
+- name: Create audit log directory
+  ansible.builtin.file:
+    path: /var/log/gateway/
+    state: directory
+    mode: "0755"
+  tags: [gateway]
+
+- name: Write gateway requirements.txt
+  ansible.builtin.copy:
+    dest: /opt/labai/gateway/requirements.txt
+    content: |
+      fastapi
+      uvicorn[standard]
+      httpx
+      presidio-analyzer
+      presidio-anonymizer
+      fpdf2
+      python-multipart
+      pyyaml
+    mode: "0644"
+  register: _gateway_requirements
+  tags: [gateway]
+
+- name: Write gateway Dockerfile
+  ansible.builtin.copy:
+    dest: /opt/labai/gateway/Dockerfile
+    content: |
+      FROM python:3.12-slim
+      RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+      WORKDIR /app
+      COPY requirements.txt .
+      RUN pip install --no-cache-dir -r requirements.txt
+      COPY main.py .
+      EXPOSE 8000
+      CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    mode: "0644"
+  register: _gateway_dockerfile
+  tags: [gateway]
+
+- name: Check if gateway image exists
+  ansible.builtin.shell: docker image inspect labai-gateway > /dev/null 2>&1 && echo "exists" || echo "missing"
+  register: _gateway_image_check
+  changed_when: false
+  tags: [gateway]
+
+- name: Build gateway Docker image
+  community.docker.docker_image:
+    name: labai-gateway
+    build:
+      path: /opt/labai/gateway/
+    source: build
+  when: >
+    _gateway_image_check.stdout == "missing"
+    or _gateway_code is changed
+    or _gateway_requirements is changed
+    or _gateway_dockerfile is changed
+  tags: [gateway]
+
+- name: Deploy gateway container
+  community.docker.docker_container:
+    name: gateway
+    image: labai-gateway
+    state: started
+    restart_policy: unless-stopped
+    networks:
+      - name: labai_net
+    published_ports:
+      - "{{ gateway_port }}:8000"
+    memory: "{{ gateway_memory_limit }}"
+    cpus: 2.0
+    env:
+      OPENAI_API_KEY: "{{ openai_api_key | default('') }}"
+      OLLAMA_MODEL_SELECTED: "{{ ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M') }}"
+      GATEWAY_LOG_LEVEL: "{{ gateway_log_level | default('info') }}"
+      GATEWAY_MAX_BODY_MB: "{{ gateway_max_body_mb | default(10) | string }}"
+      GATEWAY_REQUEST_TIMEOUT: "{{ gateway_request_timeout | default(120) | string }}"
+      AUDIT_LOG_PATH: "/var/log/gateway/audit.jsonl"
+      WORKSPACE_REGISTRY_PATH: "/app/workspace_registry.yml"
+    volumes:
+      - /opt/labai/gateway/workspace_registry.yml:/app/workspace_registry.yml:ro
+      - /var/log/gateway:/var/log/gateway:rw
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+  tags: [gateway]

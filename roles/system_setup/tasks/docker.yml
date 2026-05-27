@@ -1,0 +1,69 @@
+---
+- name: Check if Docker is already installed
+  ansible.builtin.command: docker --version
+  register: _docker_check
+  changed_when: false
+  failed_when: false
+  tags: [system]
+
+- name: Install Docker prerequisites
+  become: true
+  ansible.builtin.apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: true
+  loop:
+    - apt-transport-https
+    - ca-certificates
+    - curl
+    - gnupg
+    - lsb-release
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Add Docker GPG key
+  become: true
+  ansible.builtin.apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Add Docker repository
+  become: true
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Install Docker packages
+  become: true
+  ansible.builtin.apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Start and enable Docker service
+  become: true
+  ansible.builtin.systemd:
+    name: docker
+    state: started
+    enabled: true
+  tags: [system]
+
+- name: Add current user to docker group
+  become: true
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+  when: docker_add_user_to_group | default(true)
+  tags: [system]

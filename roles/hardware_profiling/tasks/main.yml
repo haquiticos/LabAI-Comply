@@ -1,0 +1,181 @@
+---
+- name: Hardware Profiling
+  tags: [hardware]
+  block:
+    - name: Incluir variaveis do model matrix
+      ansible.builtin.include_vars:
+        file: model_matrix.yml
+    - name: Exibir informacoes de hardware detectado
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          LabAI-Comply - Deteccao de Hardware
+          ========================================
+          RAM Total: {{ ansible_memtotal_mb }} MB
+          vCPUs: {{ ansible_processor_vcpus }}
+    - name: Detectar GPU NVIDIA
+      ansible.builtin.shell: nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1
+      register: gpu_detection
+      ignore_errors: true
+      changed_when: false
+
+    - name: Calcular VRAM disponivel
+      ansible.builtin.set_fact:
+        gpu_vram_mb: "{{ gpu_detection.stdout | default('0') | int }}"
+        ollama_gpu_enabled: "{{ (gpu_detection.stdout | default('0') | int) > 4096 }}"
+    - name: Calcular RAM disponivel para Ollama
+      ansible.builtin.set_fact:
+        ram_available_mb: "{{ ansible_memtotal_mb - 4096 }}"
+    - name: Verificar espaco livre em /opt
+      ansible.builtin.shell: |
+        if mountpoint -q /opt 2>/dev/null; then
+          df --output=avail /opt | tail -1 | tr -d ' '
+        else
+          df --output=avail / | tail -1 | tr -d ' '
+        fi
+      register: disk_space_kb
+      changed_when: false
+
+    - name: Calcular espaco em GB
+      ansible.builtin.set_fact:
+        disk_free_gb: "{{ (disk_space_kb.stdout | int / 1048576) | int }}"
+    - name: Inicializar lista de opcoes viaveis
+      ansible.builtin.set_fact:
+        viable_choices: []
+
+    - name: Filtrar opcoes de modelos viaveis
+      ansible.builtin.set_fact:
+        viable_choices: >-
+          {{ viable_choices | default([]) + [
+            {
+              'profile': item.0.profile,
+              'tag': item.1.tag,
+              'disk_gb': item.1.disk_gb,
+              'model_ram_mb': item.1.model_ram_mb,
+              'vram_required_mb': item.0.vram_required_mb
+            }
+          ] }}
+      when:
+        - ram_available_mb | int >= item.0.min_ram_mb | int
+        - ram_available_mb | int <= item.0.max_ram_mb | int
+        - (item.0.vram_required_mb | int == 0) or (gpu_vram_mb | int >= item.0.vram_required_mb | int)
+        - disk_free_gb | int >= item.1.disk_gb | int
+      loop: "{{ model_matrix | subelements('options') }}"
+      loop_control:
+        label: "{{ item.1.tag }}"
+
+    - name: Verificar opcoes viaveis disponiveis
+      ansible.builtin.assert:
+        that:
+          - viable_choices | length > 0
+        fail_msg: |
+          Nenhuma opcao de modelo viavel encontrada para este hardware.
+          RAM disponivel: {{ ram_available_mb }} MB
+          VRAM: {{ gpu_vram_mb }} MB
+          Disco livre: {{ disk_free_gb }} GB
+          Requisitos minimos nao atendidos.
+    - name: Processo de selecao de modelo
+      block:
+        - name: Validar modelo ja pre-selecionado
+          block:
+            - name: Verificar compatibilidade do modelo pre-selecionado
+              ansible.builtin.assert:
+                that:
+                  - ollama_model_selected in (viable_choices | map(attribute='tag') | list)
+                fail_msg: >-
+                  Modelo '{{ ollama_model_selected }}' nao e viavel para este hardware.
+                  Opcoes disponiveis: {{ viable_choices | map(attribute='tag') | list | join(', ') }}
+
+            - name: Modelo ja selecionado - pulando menu interativo
+              ansible.builtin.debug:
+                msg: >-
+                  Modelo '{{ ollama_model_selected }}' ja selecionado e validado.
+                  Pulando menu de selecao.
+          when:
+            - ollama_model_selected is defined
+            - ollama_model_selected | default('') | length > 0
+        - name: Selecao interativa de modelo
+          block:
+            - name: Exibir resumo de hardware e opcoes viaveis
+              ansible.builtin.debug:
+                msg: |
+                  ========================================
+                  Resumo de Hardware
+                  ========================================
+                  RAM Disponivel: {{ ram_available_mb }} MB
+                  GPU: {{ 'NVIDIA ' ~ gpu_vram_mb ~ ' MB VRAM' if (ollama_gpu_enabled | bool) else 'Nao detectada / insuficiente' }}
+                  Disco Livre: {{ disk_free_gb }} GB
+
+                  Modelos Compativeis:
+                  {% for choice in viable_choices -%}
+                  {{ loop.index }}. [{{ choice.profile }}] {{ choice.tag }} ({{ choice.disk_gb }}GB disco, {{ choice.model_ram_mb }}MB RAM)
+                  {% endfor -%}
+
+            - name: Solicitar selecao do modelo
+              ansible.builtin.pause:
+                prompt: "Digite o numero ou nome completo do modelo: "
+              register: model_input
+
+            - name: Processar selecao numerica
+              ansible.builtin.set_fact:
+                ollama_model_selected: "{{ viable_choices[model_input.user_input | int - 1].tag }}"
+              when:
+                - model_input.user_input | default('') | length > 0
+                - model_input.user_input | int > 0
+                - model_input.user_input | int <= viable_choices | length
+
+            - name: Processar selecao por nome de tag
+              ansible.builtin.set_fact:
+                ollama_model_selected: "{{ model_input.user_input }}"
+              when:
+                - model_input.user_input | default('') | length > 0
+                - model_input.user_input | int == 0 or model_input.user_input | int > viable_choices | length
+
+            - name: Validar modelo selecionado interativamente
+              ansible.builtin.assert:
+                that:
+                  - ollama_model_selected is defined
+                  - ollama_model_selected | default('') | length > 0
+                  - ollama_model_selected in (viable_choices | map(attribute='tag') | list)
+                fail_msg: >-
+                  Selecao '{{ ollama_model_selected | default("vazia") }}' invalida.
+                  Escolha um numero ou tag valida da lista acima.
+          when:
+            - ollama_model_selected is not defined or ollama_model_selected | default('') | length == 0
+            - not (headless | default(false) | bool)
+        - name: Falhar em modo headless sem modelo selecionado
+          ansible.builtin.fail:
+            msg: |
+              Modo headless ativo mas nenhum modelo foi especificado.
+              Use: ansible-playbook ... -e "ollama_model_selected=<tag>"
+              Opcoes viaveis para este hardware:
+              {{ viable_choices | map(attribute='tag') | list | join('\n  ') }}
+          when:
+            - ollama_model_selected is not defined or ollama_model_selected | default('') | length == 0
+            - headless | default(false) | bool
+    - name: Obter detalhes do modelo selecionado
+      ansible.builtin.set_fact:
+        selected_model_details: "{{ viable_choices | selectattr('tag', 'equalto', ollama_model_selected) | first }}"
+
+    - name: Calcular limites de recursos do Ollama
+      ansible.builtin.set_fact:
+        ollama_ram_limit: "{{ (ram_available_mb | int * 0.8 / 1024) | int }}g"
+        ollama_num_parallel: >-
+          {{ [2, ((ram_available_mb | int) / ((selected_model_details.model_ram_mb | int) * 1.3)) | int] | max }}
+        ollama_keep_alive: "30m"
+    - name: Exibir resumo final da configuracao
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Configuracao Final - LabAI-Comply
+          ========================================
+          Modelo Selecionado: {{ ollama_model_selected }}
+          Perfil: {{ selected_model_details.profile }}
+          RAM Disponivel: {{ ram_available_mb }} MB
+          RAM Limit: {{ ollama_ram_limit }}
+          Paralelismo: {{ ollama_num_parallel }}
+          Keep Alive: {{ ollama_keep_alive }}
+          GPU: {{ 'Ativada (' ~ gpu_vram_mb ~ ' MB VRAM)' if (ollama_gpu_enabled | bool) else 'Desativada' }}
+          Disco Necessario: {{ selected_model_details.disk_gb }} GB
+          Disco Livre: {{ disk_free_gb }} GB
+          ========================================

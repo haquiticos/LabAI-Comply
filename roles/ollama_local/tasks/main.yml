@@ -1,0 +1,115 @@
+---
+# Ollama local LLM deployment
+# Tags: ollama
+
+- name: Check if Ollama container already exists and is running
+  ansible.builtin.shell: >
+    docker ps --filter "name={{ ollama_container_name }}"
+    --format '{{ '{{' }}.Status{{ '}}' }}'
+  register: _ollama_status
+  changed_when: false
+  tags: [ollama]
+
+- name: Display current Ollama container status
+  ansible.builtin.debug:
+    msg: "Ollama container status: {{ _ollama_status.stdout | default('not running') }}"
+  tags: [ollama]
+
+- name: Ensure Ollama data directory exists
+  ansible.builtin.file:
+    path: /opt/labai/ollama
+    state: directory
+    mode: "0755"
+  tags: [ollama]
+
+- name: Deploy Ollama container (without GPU)
+  ansible.builtin.shell: >
+    docker run -d
+    --name {{ ollama_container_name }}
+    --network labai_net
+    --restart unless-stopped
+    -e OLLAMA_NUM_PARALLEL={{ ollama_num_parallel }}
+    -e OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }}
+    --memory {{ ollama_ram_limit }}
+    --cpus {{ ansible_processor_vcpus - 1 }}
+    -v /opt/labai/ollama:/root/.ollama
+    --health-cmd "curl -f http://localhost:11434/api/tags"
+    --health-interval 30s
+    --health-timeout 10s
+    --health-retries 3
+    -p {{ ollama_port }}:11434
+    {{ ollama_image }}
+  when:
+    - _ollama_status.stdout == ""
+    - not ollama_gpu_enabled | bool
+  register: _ollama_deploy
+  tags: [ollama]
+
+- name: Deploy Ollama container (with GPU)
+  ansible.builtin.shell: >
+    docker run -d
+    --name {{ ollama_container_name }}
+    --network labai_net
+    --restart unless-stopped
+    --gpus all
+    -e OLLAMA_NUM_PARALLEL={{ ollama_num_parallel }}
+    -e OLLAMA_KEEP_ALIVE={{ ollama_keep_alive }}
+    --memory {{ ollama_ram_limit }}
+    --cpus {{ ansible_processor_vcpus - 1 }}
+    -v /opt/labai/ollama:/root/.ollama
+    --health-cmd "curl -f http://localhost:11434/api/tags"
+    --health-interval 30s
+    --health-timeout 10s
+    --health-retries 3
+    -p {{ ollama_port }}:11434
+    {{ ollama_image }}
+  when:
+    - _ollama_status.stdout == ""
+    - ollama_gpu_enabled | bool
+  register: _ollama_deploy_gpu
+  tags: [ollama]
+
+- name: Wait for Ollama to be healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ ollama_port }}/api/tags"
+    method: GET
+    return_content: true
+  register: _ollama_health
+  until: _ollama_health.status == 200
+  retries: 10
+  delay: 5
+  tags: [ollama]
+
+- name: Check if model is already downloaded
+  ansible.builtin.shell: >
+    docker exec {{ ollama_container_name }} ollama list |
+    grep -q '{{ ollama_model_selected }}'
+  register: _ollama_model_check
+  failed_when: false
+  changed_when: false
+  tags: [ollama]
+
+- name: Pull Ollama model
+  ansible.builtin.shell: >
+    docker exec {{ ollama_container_name }} ollama pull {{ ollama_model_selected }}
+  register: _ollama_pull
+  when: _ollama_model_check.rc != 0
+  tags: [ollama]
+
+- name: Display pull progress
+  ansible.builtin.debug:
+    msg: "Model pull result: {{ _ollama_pull.stdout_lines | default(['Model already available']) }}"
+  when: _ollama_pull is defined
+  tags: [ollama]
+
+- name: Verify model is available
+  ansible.builtin.shell: >
+    docker exec {{ ollama_container_name }} ollama list
+  register: _ollama_models
+  changed_when: false
+  tags: [ollama]
+
+- name: Display available models
+  ansible.builtin.debug:
+    msg: "{{ _ollama_models.stdout_lines }}"
+  tags: [ollama]

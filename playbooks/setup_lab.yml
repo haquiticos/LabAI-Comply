@@ -1,0 +1,141 @@
+---
+- name: LabAI-Comply - Provisionamento completo de infraestrutura de IA para pesquisa
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - "../defaults/main.yml"
+
+  pre_tasks:
+    - name: Validar requisitos minimos de hardware
+      ansible.builtin.assert:
+        that:
+          - ansible_memtotal_mb >= 8192
+          - ansible_facts['mounts'] | selectattr('mount', 'equalto', '/opt') | list | length > 0
+            or (ansible_facts['mounts'] | map(attribute='mount') | select('match', '^/$') | list | length > 0)
+        fail_msg: >
+          Hardware insuficiente. Requerido: 8 GB RAM, 20 GB livres em /opt.
+          Detectado: {{ ansible_memtotal_mb | int }} MB RAM.
+        quiet: true
+
+    - name: Verificar espaco livre em /opt (ou /)
+      ansible.builtin.shell: |
+        if mountpoint -q /opt 2>/dev/null; then
+          df --output=avail /opt | tail -1 | tr -d ' '
+        else
+          df --output=avail / | tail -1 | tr -d ' '
+        fi
+      register: opt_free_space_kb
+      changed_when: false
+
+    - name: Validar espaco em disco
+      ansible.builtin.assert:
+        that:
+          - (opt_free_space_kb.stdout | int) > 20971520  # 20 GB in KB
+        fail_msg: >
+          Espaco insuficiente em disco. Requerido: 20 GB livres em /opt.
+          Detectado: {{ (opt_free_space_kb.stdout | int / 1048576) | round(1) }} GB.
+        quiet: true
+
+  roles:
+    - role: hardware_profiling
+      tags: [hardware]
+
+    - role: system_setup
+      tags: [system]
+
+    - role: tls_setup
+      tags: [tls]
+
+    - role: ollama_local
+      tags: [ollama]
+
+    - role: presidio_guard
+      tags: [presidio]
+
+    - role: fastapi_gateway
+      tags: [gateway]
+
+    - role: anythingllm_core
+      tags: [anythingllm]
+
+    - role: compliance_audit
+      tags: [audit]
+
+    - role: backup
+      tags: [backup]
+
+  post_tasks:
+    - name: Validacao final - todos os containers saudaveis
+      tags: [validate]
+      block:
+        - name: Aguardar containers estabilizarem
+          ansible.builtin.pause:
+            seconds: 15
+
+        - name: Verificar saude do Ollama
+          ansible.builtin.uri:
+            url: "http://localhost:{{ ollama_port | default(11434) }}/api/tags"
+            method: GET
+            return_content: true
+          register: _val_ollama
+          retries: 5
+          delay: 5
+          failed_when: false
+
+        - name: Verificar saude do Gateway
+          ansible.builtin.uri:
+            url: "http://localhost:{{ gateway_port | default(8000) }}/health"
+            method: GET
+            return_content: true
+          register: _val_gateway
+          retries: 5
+          delay: 5
+          failed_when: false
+
+        - name: Verificar saude do AnythingLLM
+          ansible.builtin.uri:
+            url: "http://localhost:{{ anythingllm_port | default(3000) }}/api/system"
+            method: GET
+            return_content: true
+          register: _val_anythingllm
+          retries: 5
+          delay: 5
+          failed_when: false
+
+        - name: Verificar modelo Ollama disponivel
+          ansible.builtin.shell: >
+            docker exec ollama ollama list
+          register: _val_model
+          changed_when: false
+          failed_when: >
+            ollama_model_selected not in _val_model.stdout
+
+        - name: Verificar audit log acessivel
+          ansible.builtin.stat:
+            path: "{{ audit_log_path }}"
+          register: _val_audit_log
+          failed_when: false
+
+        - name: Exibir resumo do deploy
+          ansible.builtin.debug:
+            msg: |
+              ========================================
+              LabAI-Comply Deploy Concluido
+              ========================================
+              Modelo Ollama: {{ ollama_model_selected }}
+              GPU habilitada: {{ ollama_gpu_enabled }}
+              RAM limit (Ollama): {{ ollama_ram_limit }}
+              Gateway: http://localhost:{{ gateway_port }}
+              AnythingLLM: https://{{ labai_domain | default('localhost') }}
+              Workspaces configurados: {{ workspace_registry | length }}
+              Pesquisadores: {{ researchers | length }}
+              ========================================
+              Status dos Servicos:
+                Ollama: {{ 'OK' if _val_ollama.status == 200 else 'FALHOU (' ~ _val_ollama.status ~ ')' }}
+                Gateway: {{ 'OK' if _val_gateway.status == 200 else 'FALHOU (' ~ _val_gateway.status ~ ')' }}
+                AnythingLLM: {{ 'OK' if _val_anythingllm.status == 200 else 'FALHOU (' ~ _val_anythingllm.status ~ ')' }}
+                Modelo: {{ 'OK' if _val_model is succeeded else 'FALHOU' }}
+                Audit Log: {{ 'OK' if _val_audit_log.stat.exists else 'NAO CRIADO' }}
+              ========================================

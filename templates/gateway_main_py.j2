@@ -1,0 +1,745 @@
+{% raw %}
+import asyncio
+import csv
+import hashlib
+import io
+import json
+import logging
+import os
+import re
+import uuid
+from datetime import datetime, date
+from typing import Optional
+
+import httpx
+import yaml
+from fastapi import FastAPI, Request, Response, HTTPException, Query
+from fastapi.responses import StreamingResponse, JSONResponse
+from fpdf import FPDF
+from starlette.background import BackgroundTask
+
+# Configuration from environment
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL_SELECTED", "qwen2.5:14b-instruct-q4_K_M")
+AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", "/var/log/gateway/audit.jsonl")
+WORKSPACE_REGISTRY_PATH = os.environ.get("WORKSPACE_REGISTRY_PATH", "/app/workspace_registry.yml")
+REQUEST_TIMEOUT = float(os.environ.get("GATEWAY_REQUEST_TIMEOUT", "120"))
+MAX_BODY_MB = int(os.environ.get("GATEWAY_MAX_BODY_MB", "10"))
+LOG_LEVEL = os.environ.get("GATEWAY_LOG_LEVEL", "info").upper()
+
+# Configure logging
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger("labai-gateway")
+
+app = FastAPI(title="LabAI-Comply Gateway", version="4.1.0")
+
+
+# ---------------------------------------------------------------------------
+# Middleware: request body size limit
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    max_bytes = MAX_BODY_MB * 1024 * 1024
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > max_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"Request body too large. Maximum {MAX_BODY_MB}MB allowed."}
+        )
+    response = await call_next(request)
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Workspace registry
+# ---------------------------------------------------------------------------
+workspace_registry = {}
+api_key_to_workspace = {}
+
+
+def load_workspace_registry():
+    global workspace_registry, api_key_to_workspace
+    try:
+        with open(WORKSPACE_REGISTRY_PATH, "r") as f:
+            workspace_registry = yaml.safe_load(f) or {}
+        for ws_name, ws_config in workspace_registry.items():
+            api_key = ws_config.get("api_key", "")
+            if api_key:
+                api_key_to_workspace[api_key] = {"name": ws_name, **ws_config}
+        logger.info(f"Loaded {len(workspace_registry)} workspaces from registry")
+    except Exception as e:
+        logger.error(f"Failed to load workspace registry: {e}")
+
+
+@app.on_event("startup")
+async def startup():
+    load_workspace_registry()
+
+
+# ---------------------------------------------------------------------------
+# Audit logging
+# ---------------------------------------------------------------------------
+audit_lock = asyncio.Lock()
+
+
+async def write_audit(entry: dict):
+    async with audit_lock:
+        try:
+            with open(AUDIT_LOG_PATH, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception as e:
+            logger.error(f"Failed to write audit log: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Workspace identification helper
+# ---------------------------------------------------------------------------
+def identify_workspace(request: Request) -> dict:
+    auth_header = request.headers.get("Authorization", "")
+    api_key = ""
+    if auth_header.startswith("Bearer"):
+        api_key = auth_header.replace("Bearer ", "").strip()
+    ws = api_key_to_workspace.get(api_key)
+    if ws:
+        return ws
+    return {
+        "name": "unknown",
+        "finalidade": "nao especificada",
+        "fase_pesquisa": "nao especificada",
+        "provider": "unknown",
+        "model": OLLAMA_MODEL,
+        "path": "/local"
+    }
+
+
+# ---------------------------------------------------------------------------
+# PII Detection (with fail-open)
+# ---------------------------------------------------------------------------
+async def detect_pii(text: str, language: str = "pt") -> tuple[list, str, dict]:
+    """
+    Detect and anonymise PII in *text*.
+
+    Returns
+    -------
+    (entities, anonymized_text, pseudonym_map)
+        Fail-open: if Presidio is unavailable, returns ([], text, {}).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Step 1 — analyse
+            analyze_resp = await client.post(
+                "http://presidio-analyzer:5002/analyze",
+                json={
+                    "text": text,
+                    "language": language,
+                    "score_threshold": {% endraw %}{{ presidio_score_threshold | default(0.5) }}{% raw %}
+                }
+            )
+            analyze_resp.raise_for_status()
+            entities = analyze_resp.json()
+
+            if not entities:
+                return [], text, {}
+
+            # Step 2 — build pseudonym mapping (ascending by start position)
+            entity_counter: dict[str, int] = {}
+            pseudonym_map: dict[str, str] = {}
+            replacements: list[tuple[int, int, str]] = []
+
+            for entity in sorted(entities, key=lambda e: e["start"]):
+                etype = entity["entity_type"]
+                start = entity["start"]
+                end = entity["end"]
+                entity_counter[etype] = entity_counter.get(etype, 0) + 1
+                pseudonym = f"<{etype}_{entity_counter[etype]}>"
+                original_text = text[start:end]
+                pseudonym_map[pseudonym] = original_text
+                replacements.append((start, end, pseudonym))
+
+            # Step 3 — replace from end to start (preserves earlier positions)
+            anonymized = text
+            for start, end, pseudonym in reversed(replacements):
+                anonymized = anonymized[:start] + pseudonym + anonymized[end:]
+
+            return entities, anonymized, pseudonym_map
+
+    except Exception as e:
+        logger.warning(f"PII detection failed (fail-open): {e}")
+        return [], text, {}
+
+
+# ---------------------------------------------------------------------------
+# Pseudonym restoration
+# ---------------------------------------------------------------------------
+def restore_pseudonyms(text: str, mapping: dict) -> str:
+    """Replace pseudonym tokens back with original values."""
+    for pseudonym, original in mapping.items():
+        text = text.replace(pseudonym, original)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Streaming helper with PII restoration
+# ---------------------------------------------------------------------------
+async def stream_with_pii_restoration(upstream_response, pseudonym_map: dict, timeout: float = 5.0):
+    """Stream SSE chunks, buffering partial pseudonym tokens for restoration."""
+    buffer = ""
+    pseudonym_pattern = re.compile(r"<[A-Z_]+_\d+>")
+    partial_pattern = re.compile(r"<[A-Z_]*_?\d*$")
+
+    async for chunk in upstream_response.aiter_bytes():
+        text = chunk.decode("utf-8", errors="replace")
+        buffer += text
+
+        # Restore any complete pseudonyms already in the buffer
+        buffer = pseudonym_pattern.sub(
+            lambda m: pseudonym_map.get(m.group(), m.group()), buffer
+        )
+
+        # Check whether a partial pseudonym sits at the end of the buffer
+        partial_match = partial_pattern.search(buffer)
+        if partial_match and partial_match.end() == len(buffer):
+            safe_part = buffer[:partial_match.start()]
+            buffer = buffer[partial_match.start():]
+            if safe_part:
+                yield safe_part.encode("utf-8")
+        else:
+            if buffer:
+                yield buffer.encode("utf-8")
+                buffer = ""
+
+    # Flush whatever remains
+    if buffer:
+        buffer = pseudonym_pattern.sub(
+            lambda m: pseudonym_map.get(m.group(), m.group()), buffer
+        )
+        yield buffer.encode("utf-8")
+
+
+# ===================================================================
+# Endpoint: POST /local/v1/chat/completions
+# ===================================================================
+@app.post("/local/v1/chat/completions")
+async def local_chat_completions(request: Request):
+    ws = identify_workspace(request)
+    user_email = request.headers.get("X-User-Email", "unknown")
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+
+    body = await request.json()
+    is_stream = body.get("stream", False)
+    forward_body = json.dumps(body)
+
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            upstream_req = client.build_request(
+                "POST",
+                "http://ollama:11434/v1/chat/completions",
+                content=forward_body,
+                headers={"Content-Type": "application/json"}
+            )
+            upstream_resp = await client.send(upstream_req, stream=is_stream)
+
+            if is_stream:
+                async def generate():
+                    try:
+                        async for chunk in upstream_resp.aiter_bytes():
+                            yield chunk
+                    finally:
+                        await upstream_resp.aclose()
+
+                async def on_stream_complete():
+                    await write_audit({
+                        "request_id": request_id,
+                        "timestamp": start_time.isoformat(),
+                        "workspace": ws["name"],
+                        "user": user_email,
+                        "action": "chat_completion",
+                        "provider": "ollama",
+                        "model_used": ws.get("model", OLLAMA_MODEL),
+                        "stream": True,
+                        "tokens_in": 0,
+                        "tokens_out": 0,
+                        "latency_ms": int((datetime.utcnow() - start_time).total_seconds() * 1000),
+                        "pii_detected": False,
+                        "pii_types": [],
+                        "pii_count": 0,
+                        "finalidade": ws.get("finalidade", "nao especificada"),
+                        "fase_pesquisa": ws.get("fase_pesquisa", "nao especificada")
+                    })
+
+                return StreamingResponse(
+                    generate(),
+                    media_type="text/event-stream",
+                    background=BackgroundTask(on_stream_complete)
+                )
+            else:
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                response_content = upstream_resp.content
+
+                # Extract token counts from upstream response
+                tokens_in = 0
+                tokens_out = 0
+                try:
+                    resp_json = json.loads(response_content)
+                    usage = resp_json.get("usage", {})
+                    tokens_in = usage.get("prompt_tokens", 0)
+                    tokens_out = usage.get("completion_tokens", 0)
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+                await write_audit({
+                    "request_id": request_id,
+                    "timestamp": start_time.isoformat(),
+                    "workspace": ws["name"],
+                    "user": user_email,
+                    "action": "chat_completion",
+                    "provider": "ollama",
+                    "model_used": ws.get("model", OLLAMA_MODEL),
+                    "stream": False,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "latency_ms": duration_ms,
+                    "pii_detected": False,
+                    "pii_types": [],
+                    "pii_count": 0,
+                    "status_code": upstream_resp.status_code,
+                    "finalidade": ws.get("finalidade", "nao especificada"),
+                    "fase_pesquisa": ws.get("fase_pesquisa", "nao especificada")
+                })
+
+                return Response(
+                    content=response_content,
+                    status_code=upstream_resp.status_code,
+                    media_type="application/json"
+                )
+    except Exception as e:
+        logger.error(f"Local completion error: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ===================================================================
+# Endpoint: POST /cloud/v1/chat/completions
+# ===================================================================
+@app.post("/cloud/v1/chat/completions")
+async def cloud_chat_completions(request: Request):
+    ws = identify_workspace(request)
+    user_email = request.headers.get("X-User-Email", "unknown")
+    request_id = str(uuid.uuid4())
+    start_time = datetime.utcnow()
+
+    body = await request.json()
+    is_stream = body.get("stream", False)
+
+    # Extract text from messages for PII detection
+    messages_text = " ".join(
+        m.get("content", "") for m in body.get("messages", [])
+    )
+
+    # PII detection (fail-open)
+    entities, _, pseudonym_map = await detect_pii(messages_text)
+    pii_detected = len(entities) > 0
+    pii_types = list(set(e["entity_type"] for e in entities)) if entities else []
+
+    # If PII was found, anonymize each message using the pseudonym map
+    if pii_detected and pseudonym_map:
+        sorted_pseudonyms = sorted(
+            pseudonym_map.items(), key=lambda x: len(x[1]), reverse=True
+        )
+        for msg in body.get("messages", []):
+            content = msg.get("content", "")
+            if content:
+                for pseudonym, original in sorted_pseudonyms:
+                    content = content.replace(original, pseudonym)
+                msg["content"] = content
+
+    forward_body = json.dumps(body)
+
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}"
+        }
+
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            upstream_req = client.build_request(
+                "POST",
+                "https://api.openai.com/v1/chat/completions",
+                content=forward_body,
+                headers=headers
+            )
+            upstream_resp = await client.send(upstream_req, stream=is_stream)
+
+            if is_stream:
+                if pii_detected:
+                    async def generate_pii():
+                        try:
+                            async for chunk in stream_with_pii_restoration(
+                                upstream_resp, pseudonym_map
+                            ):
+                                yield chunk
+                        finally:
+                            await upstream_resp.aclose()
+
+                    async def on_stream_complete_pii():
+                        await write_audit({
+                            "request_id": request_id,
+                            "timestamp": start_time.isoformat(),
+                            "workspace": ws["name"],
+                            "user": user_email,
+                            "action": "chat_completion",
+                            "provider": "openai",
+                            "model_used": body.get("model", "unknown"),
+                            "stream": True,
+                            "tokens_in": 0,
+                            "tokens_out": 0,
+                            "latency_ms": int((datetime.utcnow() - start_time).total_seconds() * 1000),
+                            "pii_detected": True,
+                            "pii_types": pii_types,
+                            "pii_count": len(entities),
+                            "finalidade": ws.get("finalidade", "nao especificada"),
+                            "fase_pesquisa": ws.get("fase_pesquisa", "nao especificada")
+                        })
+
+                    return StreamingResponse(
+                        generate_pii(),
+                        media_type="text/event-stream",
+                        background=BackgroundTask(on_stream_complete_pii)
+                    )
+                else:
+                    async def generate():
+                        try:
+                            async for chunk in upstream_resp.aiter_bytes():
+                                yield chunk
+                        finally:
+                            await upstream_resp.aclose()
+
+                    async def on_stream_complete():
+                        await write_audit({
+                            "request_id": request_id,
+                            "timestamp": start_time.isoformat(),
+                            "workspace": ws["name"],
+                            "user": user_email,
+                            "action": "chat_completion",
+                            "provider": "openai",
+                            "model_used": body.get("model", "unknown"),
+                            "stream": True,
+                            "tokens_in": 0,
+                            "tokens_out": 0,
+                            "latency_ms": int((datetime.utcnow() - start_time).total_seconds() * 1000),
+                            "pii_detected": False,
+                            "pii_types": [],
+                            "pii_count": 0,
+                            "finalidade": ws.get("finalidade", "nao especificada"),
+                            "fase_pesquisa": ws.get("fase_pesquisa", "nao especificada")
+                        })
+
+                    return StreamingResponse(
+                        generate(),
+                        media_type="text/event-stream",
+                        background=BackgroundTask(on_stream_complete)
+                    )
+            else:
+                duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                response_text = upstream_resp.text
+
+                if pii_detected:
+                    response_text = restore_pseudonyms(response_text, pseudonym_map)
+
+                # Extract token counts from upstream response
+                tokens_in = 0
+                tokens_out = 0
+                try:
+                    resp_json = json.loads(response_text)
+                    usage = resp_json.get("usage", {})
+                    tokens_in = usage.get("prompt_tokens", 0)
+                    tokens_out = usage.get("completion_tokens", 0)
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+                await write_audit({
+                    "request_id": request_id,
+                    "timestamp": start_time.isoformat(),
+                    "workspace": ws["name"],
+                    "user": user_email,
+                    "action": "chat_completion",
+                    "provider": "openai",
+                    "model_used": body.get("model", "unknown"),
+                    "stream": False,
+                    "tokens_in": tokens_in,
+                    "tokens_out": tokens_out,
+                    "latency_ms": duration_ms,
+                    "pii_detected": pii_detected,
+                    "pii_types": pii_types,
+                    "pii_count": len(entities),
+                    "status_code": upstream_resp.status_code,
+                    "finalidade": ws.get("finalidade", "nao especificada"),
+                    "fase_pesquisa": ws.get("fase_pesquisa", "nao especificada")
+                })
+
+                return Response(
+                    content=response_text,
+                    status_code=upstream_resp.status_code,
+                    media_type="application/json"
+                )
+    except Exception as e:
+        logger.error(f"Cloud completion error: {e}")
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ===================================================================
+# Endpoint: GET /health
+# ===================================================================
+@app.get("/health")
+async def health():
+    checks = {}
+    overall = "healthy"
+
+    # Check Ollama
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("http://ollama:11434/api/tags")
+            checks["ollama"] = "up" if resp.status_code == 200 else "degraded"
+    except Exception:
+        checks["ollama"] = "down"
+        overall = "degraded"
+
+    # Check Presidio Analyzer
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("http://presidio-analyzer:5002/health")
+            checks["presidio_analyzer"] = "up" if resp.status_code == 200 else "degraded"
+    except Exception:
+        checks["presidio_analyzer"] = "down"
+
+    # Check Presidio Anonymizer
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get("http://presidio-anonymizer:5001/health")
+            checks["presidio_anonymizer"] = "up" if resp.status_code == 200 else "degraded"
+    except Exception:
+        checks["presidio_anonymizer"] = "down"
+
+    status_code = 200 if overall == "healthy" else 503
+    return JSONResponse(
+        content={"status": overall, "checks": checks},
+        status_code=status_code
+    )
+
+
+# ===================================================================
+# Endpoint: GET /audit/usage
+# ===================================================================
+@app.get("/audit/usage")
+async def audit_usage(
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None)
+):
+    records = []
+    try:
+        with open(AUDIT_LOG_PATH, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                ts = entry.get("timestamp", "")
+                try:
+                    entry_date = datetime.fromisoformat(ts).date()
+                except (ValueError, TypeError):
+                    continue
+
+                if from_date:
+                    try:
+                        if entry_date < date.fromisoformat(from_date):
+                            continue
+                    except ValueError:
+                        pass
+                if to_date:
+                    try:
+                        if entry_date > date.fromisoformat(to_date):
+                            continue
+                    except ValueError:
+                        pass
+
+                records.append(entry)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.error(f"Error reading audit log: {e}")
+
+    return JSONResponse(content={"records": records, "count": len(records)})
+
+
+# ===================================================================
+# Endpoint: GET /audit/report
+# ===================================================================
+@app.get("/audit/report")
+async def audit_report(
+    format: str = Query("csv"),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None)
+):
+    # Aggregate records
+    aggregates: dict[tuple, dict] = {}
+    try:
+        with open(AUDIT_LOG_PATH, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                ts = entry.get("timestamp", "")
+                try:
+                    entry_date = datetime.fromisoformat(ts).date()
+                except (ValueError, TypeError):
+                    continue
+
+                if from_date:
+                    try:
+                        if entry_date < date.fromisoformat(from_date):
+                            continue
+                    except ValueError:
+                        pass
+                if to_date:
+                    try:
+                        if entry_date > date.fromisoformat(to_date):
+                            continue
+                    except ValueError:
+                        pass
+
+                date_str = entry_date.strftime("%d/%m/%Y")
+                model = entry.get("model_used", entry.get("model", "unknown"))
+                provider = entry.get("provider", "unknown")
+                finalidade = entry.get("finalidade", "nao especificada")
+                fase = entry.get("fase_pesquisa", "nao especificada")
+
+                key = (date_str, model, provider, finalidade, fase)
+                if key not in aggregates:
+                    aggregates[key] = {"interactions": 0, "tokens_approx": 0}
+                aggregates[key]["interactions"] += 1
+                aggregates[key]["tokens_approx"] += (
+                    entry.get("tokens_in", 0) + entry.get("tokens_out", 0)
+                )
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.error(f"Error reading audit log: {e}")
+
+    model_display_names = {
+        "qwen2.5:14b-instruct-q4_K_M": "Qwen2.5 14B (Ollama local)",
+        "gpt-4": "GPT-4 (OpenAI)",
+        "gpt-3.5-turbo": "GPT-3.5 Turbo (OpenAI)"
+    }
+
+    # ----- CSV format -----
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "Data", "Ferramenta", "Finalidade",
+            "Fase da Pesquisa", "Interacoes", "Tokens (aprox.)"
+        ])
+
+        for (d, model, provider, finalidade, fase), agg in sorted(aggregates.items()):
+            display_name = model_display_names.get(
+                model, f"{model} ({provider})"
+            )
+            writer.writerow([
+                d,
+                display_name,
+                finalidade,
+                fase,
+                agg["interactions"],
+                agg["tokens_approx"]
+            ])
+
+        output.seek(0)
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_report.csv"}
+        )
+
+    # ----- PDF format -----
+    if format == "pdf":
+        pdf = FPDF()
+        pdf.add_page()
+
+        # Title
+        pdf.set_font("Helvetica", "B", 16)
+        pdf.cell(
+            0, 10,
+            "Relatorio de Uso de IA - LabAI-Comply",
+            new_x="LMARGIN", new_y="NEXT", align="C"
+        )
+        pdf.ln(5)
+
+        # Period subtitle
+        if from_date or to_date:
+            period_str = f"Periodo: {from_date or 'inicio'} ate {to_date or 'agora'}"
+        else:
+            period_str = "Periodo: todos os registros"
+        pdf.set_font("Helvetica", "", 11)
+        pdf.cell(0, 8, period_str, new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.ln(5)
+
+        # Table header
+        col_widths = [25, 50, 45, 40, 15, 20]
+        headers_pdf = ["Data", "Ferramenta", "Finalidade", "Fase Pesquisa", "Int.", "Tokens"]
+
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_fill_color(200, 200, 200)
+        for i, h in enumerate(headers_pdf):
+            pdf.cell(col_widths[i], 7, h, border=1, fill=True)
+        pdf.ln()
+
+        # Table rows
+        pdf.set_font("Helvetica", "", 7)
+
+        pdf_model_names = {
+            "qwen2.5:14b-instruct-q4_K_M": "Qwen2.5 14B (Ollama)",
+            "gpt-4": "GPT-4 (OpenAI)",
+            "gpt-3.5-turbo": "GPT-3.5 (OpenAI)"
+        }
+
+        for (d, model, provider, finalidade, fase), agg in sorted(aggregates.items()):
+            display_name = pdf_model_names.get(model, model)
+            row = [
+                d,
+                display_name[:30],
+                finalidade[:25],
+                fase[:22],
+                str(agg["interactions"]),
+                str(agg["tokens_approx"])
+            ]
+            for i, val in enumerate(row):
+                pdf.cell(col_widths[i], 6, val, border=1)
+            pdf.ln()
+
+        # Footer
+        pdf.ln(10)
+        pdf.set_font("Helvetica", "I", 8)
+        pdf.cell(
+            0, 5,
+            f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}",
+            new_x="LMARGIN", new_y="NEXT", align="C"
+        )
+
+        pdf_content = bytes(pdf.output())
+        return Response(
+            content=pdf_content,
+            media_type="application/pdf",
+            headers={"Content-Disposition": "attachment; filename=audit_report.pdf"}
+        )
+
+    raise HTTPException(status_code=400, detail="Invalid format. Use 'csv' or 'pdf'.")
+{% endraw %}

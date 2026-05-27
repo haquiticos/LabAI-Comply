@@ -1,0 +1,368 @@
+---
+- name: Create AnythingLLM storage directory
+  ansible.builtin.file:
+    path: "{{ anythingllm_storage_path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [anythingllm]
+
+- name: Check if AnythingLLM container already exists
+  ansible.builtin.shell: >
+    docker ps -a --filter name={{ anythingllm_container_name }}
+    --format '{{ '{{' }}.ID{{ '}}' }}'
+  register: anythingllm_container_check
+  changed_when: false
+  tags: [anythingllm]
+
+- name: Deploy AnythingLLM container
+  community.docker.docker_container:
+    name: "{{ anythingllm_container_name }}"
+    image: "{{ anythingllm_image }}"
+    state: started
+    restart_policy: unless-stopped
+    networks:
+      - name: labai_net
+    memory: "{{ anythingllm_memory_limit }}"
+    published_ports:
+      - "{{ anythingllm_port }}:3000"
+    volumes:
+      - "{{ anythingllm_storage_path }}:/app/server/storage"
+    env:
+      OPEN_AI_KEY: ""
+      OPENAI_API_BASE_URL: "http://gateway:8000/cloud"
+      EMBEDDING_ENGINE: "local"
+      VECTOR_DB: "lancedb"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/system"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+  when: anythingllm_container_check.stdout | length == 0
+  tags: [anythingllm]
+
+- name: Wait for AnythingLLM to be healthy
+  ansible.builtin.shell: >
+    docker inspect --format '{{ '{{' }}.State.Health.Status{{ '}}' }}'
+    {{ anythingllm_container_name }}
+  register: anythingllm_health
+  until: anythingllm_health.stdout == "healthy"
+  retries: 15
+  delay: 10
+  changed_when: false
+  tags: [anythingllm]
+
+- name: Check if AnythingLLM initial setup is complete
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/system"
+    method: GET
+    return_content: true
+  register: anythingllm_system_status
+  failed_when: false
+  tags: [anythingllm]
+
+- name: Complete initial setup - create admin account
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/system/setup-complete"
+    method: POST
+    body_format: json
+    body:
+      username: "admin"
+      password: "{{ anythingllm_admin_password }}"
+      role: "admin"
+    status_code: [200, 201, 422]
+    return_content: true
+  register: admin_setup_result
+  when:
+    - anythingllm_system_status.json is defined
+    - (anythingllm_system_status.json.setup_complete is not defined
+       or not anythingllm_system_status.json.setup_complete)
+  failed_when: false
+  tags: [anythingllm]
+
+- name: Display manual setup instructions if admin creation failed
+  ansible.builtin.debug:
+    msg: >
+      Admin account creation via API returned:
+      {{ admin_setup_result.status | default('N/A') }}
+      {{ admin_setup_result.content | default('') }}.
+      If automatic setup failed, open http://localhost:{{ anythingllm_port }}
+      in your browser and create the admin account manually.
+      Username: admin, Role: admin
+  when:
+    - admin_setup_result is defined
+    - admin_setup_result.failed is defined
+    - admin_setup_result.failed
+  tags: [anythingllm]
+
+- name: Authenticate as admin to get session token
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/request-token"
+    method: POST
+    body_format: json
+    body:
+      username: "admin"
+      password: "{{ anythingllm_admin_password }}"
+    status_code: [200, 201, 403]
+    return_content: true
+  register: admin_login_result
+  failed_when: false
+  tags: [anythingllm]
+
+- name: Set admin auth token fact
+  ansible.builtin.set_fact:
+    admin_auth_token: "{{ admin_login_result.json.token | default('') }}"
+  when:
+    - admin_login_result.json is defined
+    - admin_login_result.json.token is defined
+  tags: [anythingllm]
+
+- name: Display manual login instructions if auth failed
+  ansible.builtin.debug:
+    msg: >
+      Admin login via API returned:
+      {{ admin_login_result.status | default('N/A') }}.
+      Manual researcher account and workspace creation may be required.
+      Log in at http://localhost:{{ anythingllm_port }} as admin.
+  when:
+    - admin_auth_token is not defined or admin_auth_token == ''
+  tags: [anythingllm]
+
+- name: Get existing users list
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/users"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    return_content: true
+    status_code: [200, 403]
+  register: existing_users
+  failed_when: false
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Set existing usernames fact
+  ansible.builtin.set_fact:
+    existing_usernames: >
+      {{ existing_users.json.users
+         | default([])
+         | map(attribute='username')
+         | list }}
+  when:
+    - existing_users.json is defined
+    - existing_users.json.users is defined
+  tags: [anythingllm]
+
+- name: Create researcher accounts
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/users"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    body_format: json
+    body:
+      username: "{{ item.email }}"
+      password: "changeme"
+      role: "default"
+    status_code: [200, 201, 409, 403]
+    return_content: true
+  register: researcher_create_result
+  failed_when: false
+  loop: "{{ researchers | default([]) }}"
+  when:
+    - admin_auth_token is defined and admin_auth_token != ''
+    - existing_usernames is defined
+    - item.email not in existing_usernames
+  tags: [anythingllm]
+
+- name: Display manual researcher creation instructions
+  ansible.builtin.debug:
+    msg: >
+      Some researcher accounts could not be created automatically.
+      For each failed account, go to Settings > Users in AnythingLLM
+      and add them manually: {{ item.item.email | default('unknown') }}
+  loop: "{{ researcher_create_result.results | default([]) }}"
+  when:
+    - item.failed is defined
+    - item.failed
+    - item.status is defined
+    - item.status != 409
+  tags: [anythingllm]
+
+- name: Get existing workspaces
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/workspaces"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    return_content: true
+    status_code: [200, 403]
+  register: existing_workspaces
+  failed_when: false
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Set existing workspace slugs fact
+  ansible.builtin.set_fact:
+    existing_workspace_slugs: >
+      {{ existing_workspaces.json.workspaces
+         | default([])
+         | map(attribute='slug')
+         | list }}
+  when:
+    - existing_workspaces.json is defined
+    - existing_workspaces.json.workspaces is defined
+  tags: [anythingllm]
+
+- name: Create workspaces from registry
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/workspace/new"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    body_format: json
+    body:
+      name: "{{ item.key }}"
+    status_code: [200, 201, 409, 403]
+    return_content: true
+  register: workspace_create_result
+  failed_when: false
+  loop: "{{ workspace_registry | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when:
+    - admin_auth_token is defined and admin_auth_token != ''
+    - existing_workspace_slugs is defined
+    - item.key | replace('_', '-') not in existing_workspace_slugs
+  tags: [anythingllm]
+
+- name: Configure workspace LLM provider
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/workspace/{{ item.key | replace('_', '-') }}/update"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    body_format: json
+    body:
+      chatProvider: "generic-openai"
+      chatModel: "{{ item.value.model | default(ollama_model_selected) }}"
+      openAiEndpoint: "http://gateway:8000{{ item.value.path | default('/cloud') }}"
+      openAiKey: "{{ workspace_api_keys[item.key] | default('') }}"
+    status_code: [200, 403, 404]
+    return_content: true
+  register: workspace_config_result
+  failed_when: false
+  loop: "{{ workspace_registry | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Display manual workspace instructions if creation failed
+  ansible.builtin.debug:
+    msg: >
+      Some workspace operations failed.
+      Go to http://localhost:{{ anythingllm_port }} and configure
+      workspace '{{ item.item.key | default('unknown') }}' manually.
+      LLM Provider: Generic OpenAI,
+      Endpoint: http://gateway:8000{{ item.item.value.path | default('/cloud') }},
+      Model: {{ item.item.value.model | default('default') }}
+  loop: "{{ workspace_config_result.results | default([]) }}"
+  when:
+    - item.failed is defined
+    - item.failed
+    - item.status is defined
+    - item.status not in [200, 409]
+  tags: [anythingllm]
+
+- name: Get current system preferences
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/system/preferences"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    return_content: true
+    status_code: [200, 403]
+  register: system_prefs
+  failed_when: false
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Disable user auto-registration
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/system/preferences"
+    method: PATCH
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    body_format: json
+    body:
+      users_can_register: false
+    status_code: [200, 403]
+    return_content: true
+  register: disable_registration_result
+  failed_when: false
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Display manual registration disable instructions
+  ansible.builtin.debug:
+    msg: >
+      Could not disable auto-registration via API.
+      Go to Settings > System in AnythingLLM and manually
+      disable 'Allow new user registration'.
+  when:
+    - disable_registration_result is defined
+    - disable_registration_result.failed is defined
+    - disable_registration_result.failed
+  tags: [anythingllm]
+
+- name: Set compliance warning system prompt in each workspace
+  ansible.builtin.uri:
+    url: "http://localhost:{{ anythingllm_port }}/api/workspace/{{ item.key | replace('_', '-') }}/update"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ admin_auth_token }}"
+    body_format: json
+    body:
+      openAiSystemPrompt: >
+        ATENCAO: A Portaria CNPq 2.664/2026 veda a insercao de projetos
+        de pesquisa de terceiros em ferramentas de IAG para elaboracao de
+        pareceres cientificos. Confirme que os documentos que voce processa
+        aqui sao de sua autoria ou voce possui autorizacao para utiliza-los.
+    status_code: [200, 403, 404]
+    return_content: true
+  register: compliance_prompt_result
+  failed_when: false
+  loop: "{{ workspace_registry | default({}) | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: admin_auth_token is defined and admin_auth_token != ''
+  tags: [anythingllm]
+
+- name: Display manual compliance prompt instructions
+  ansible.builtin.debug:
+    msg: >
+      Could not set compliance warning in workspace '{{ item.item.key }}'.
+      Go to the workspace settings in AnythingLLM and set the system prompt to
+      the CNPq 2.664/2026 compliance warning manually.
+  loop: "{{ compliance_prompt_result.results | default([]) }}"
+  when:
+    - item.failed is defined
+    - item.failed
+    - item.status is defined
+    - item.status not in [200]
+  tags: [anythingllm]
+
+- name: Display AnythingLLM core deployment summary
+  ansible.builtin.debug:
+    msg: >
+      AnythingLLM deployment complete.
+      URL: http://localhost:{{ anythingllm_port }}
+      Container: {{ anythingllm_container_name }}
+      Storage: {{ anythingllm_storage_path }}
+      Admin user: admin.
+      Review any manual instruction messages above for operations
+      that could not be completed via API.
+  tags: [anythingllm]

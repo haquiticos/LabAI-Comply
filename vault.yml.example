@@ -1,0 +1,19 @@
+---
+# vault.yml - Ansible Vault para LabAI-Comply
+# Criptografe com: ansible-vault encrypt vault.yml
+# Use com: ansible-playbook ... --vault-password-file ~/.vault_pass
+
+# Chave de API do OpenAI (para path /cloud/ do gateway)
+openai_api_key: "sk-sua-chave-aqui"
+
+# Senha do administrador do AnythingLLM
+anythingllm_admin_password: "TroquePorUmaSenhaForte123!"
+
+# API keys por workspace (identificam o workspace no gateway)
+# O gateway mapeia cada key para finalidade/fase_pesquisa no audit log
+workspace_api_keys:
+  ws-analise-dados: "troque-por-uma-chave-segura-001"
+  ws-concepcao: "troque-por-uma-chave-segura-002"
+  ws-redacao: "troque-por-uma-chave-segura-003"
+  ws-revisao-literatura: "troque-por-uma-chave-segura-004"
+  ws-submissao: "troque-por-uma-chave-segura-005"

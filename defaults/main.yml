@@ -1,0 +1,89 @@
+---
+# === Hardware (calculado dinamicamente pelo role hardware_profiling) ===
+ollama_model_selected: "qwen2.5:14b-instruct-q4_K_M"
+ollama_ram_limit: "26g"
+ollama_gpu_enabled: false
+ollama_num_parallel: 4
+ollama_keep_alive: "30m"
+headless: false
+
+# === Pesquisadores ===
+# Formato: [{"name": "Maria", "email": "maria@lab.edu.br"}, ...]
+researchers: []
+
+# === Workspace Registry (CNPq Art. 9o, I, c) ===
+workspace_registry:
+  ws-analise-dados:
+    finalidade: "analise e processamento de dados"
+    fase_pesquisa: "analise de dados"
+    provider: "ollama"
+    path: "/local"
+  ws-concepcao:
+    finalidade: "concepcao e planejamento da pesquisa"
+    fase_pesquisa: "concepcao"
+    provider: "openai"
+    model: "gpt-4"
+    path: "/cloud"
+  ws-redacao:
+    finalidade: "redacao e revisao de texto"
+    fase_pesquisa: "redacao"
+    provider: "openai"
+    model: "gpt-4"
+    path: "/cloud"
+  ws-revisao-literatura:
+    finalidade: "revisao bibliografica e pesquisa de literatura"
+    fase_pesquisa: "concepcao"
+    provider: "openai"
+    model: "gpt-4"
+    path: "/cloud"
+  ws-submissao:
+    finalidade: "formatacao e preparacao para submissao"
+    fase_pesquisa: "submissao"
+    provider: "openai"
+    model: "gpt-4"
+    path: "/cloud"
+
+# === Workspace API Keys ===
+# Geradas automaticamente se nao fornecidas via vault.
+# Para producao, defina via Ansible Vault (vault.yml):
+#   workspace_api_keys:
+#     ws-analise-dados: "sua-chave-segura"
+#     ws-concepcao: "sua-chave-segura"
+#     ...
+workspace_api_keys:
+  ws-analise-dados: "key-analise-001"
+  ws-concepcao: "key-concepcao-001"
+  ws-redacao: "key-redacao-001"
+  ws-revisao-literatura: "key-revisao-001"
+  ws-submissao: "key-submissao-001"
+
+# === Presidio ===
+presidio_language: "pt"
+presidio_score_threshold: 0.5
+
+# === Gateway ===
+gateway_port: 8000
+gateway_max_body_mb: 10
+gateway_request_timeout: 120
+
+# === TLS ===
+labai_domain: ""  # Vazio = auto-assinado
+
+# === Rede ===
+labai_subnet: "172.20.0.0/16"
+
+# === Audit ===
+audit_retention_days: 90
+audit_log_path: "/var/log/gateway/audit.jsonl"
+
+# === Backup ===
+backup_dir: "/opt/labai/backups"
+backup_ollama_model: false
+
+# === Container Resources ===
+presidio_memory_limit: "2g"
+gateway_memory_limit: "1g"
+anythingllm_memory_limit: "4g"
+
+# === AnythingLLM ===
+anythingllm_admin_password: ""  # Obrigatorio via vault em producao

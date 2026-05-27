@@ -1,0 +1,55 @@
+---
+- name: Ensure audit reports directory exists
+  ansible.builtin.file:
+    path: "{{ audit_report_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [audit]
+
+- name: Ensure scripts directory exists
+  ansible.builtin.file:
+    path: /opt/labai/scripts
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [audit]
+
+- name: Deploy daily audit script
+  ansible.builtin.template:
+    src: audit_script.sh.j2
+    dest: /opt/labai/scripts/audit_daily.sh
+    owner: root
+    group: root
+    mode: "0755"
+  tags: [audit]
+
+- name: Set up daily audit cron job
+  ansible.builtin.cron:
+    name: "labai daily compliance audit"
+    minute: "0"
+    hour: "1"
+    job: "/opt/labai/scripts/audit_daily.sh"
+    user: root
+    state: present
+  tags: [audit]
+
+- name: Configure logrotate for audit logs
+  ansible.builtin.copy:
+    dest: /etc/logrotate.d/labai-audit
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      {{ audit_log_path }} {
+          weekly
+          rotate {{ (audit_retention_days / 7) | int }}
+          compress
+          delaycompress
+          missingok
+          notifempty
+          copytruncate
+      }
+  tags: [audit]

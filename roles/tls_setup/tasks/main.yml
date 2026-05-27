@@ -1,0 +1,118 @@
+---
+- name: Install Nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+  tags: [tls]
+
+- name: Install Certbot and Nginx plugin for Let's Encrypt
+  block:
+    - name: Install certbot and python3-certbot-nginx
+      ansible.builtin.apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+        update_cache: true
+      when: labai_domain is defined and labai_domain | length > 0
+
+    - name: Create TLS directory
+      ansible.builtin.file:
+        path: /opt/labai/tls
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+      when: labai_domain is defined and labai_domain | length > 0
+
+    - name: Issue Let's Encrypt certificate
+      ansible.builtin.command: >
+        certbot certonly --nginx
+        -d {{ labai_domain }}
+        --non-interactive
+        --agree-tos
+        --email admin@{{ labai_domain }}
+      args:
+        creates: "/etc/letsencrypt/live/{{ labai_domain }}/fullchain.pem"
+      when: labai_domain is defined and labai_domain | length > 0
+      register: certbot_result
+
+    - name: Set TLS certificate paths for Let's Encrypt
+      ansible.builtin.set_fact:
+        tls_cert_path: "/etc/letsencrypt/live/{{ labai_domain }}/fullchain.pem"
+        tls_key_path: "/etc/letsencrypt/live/{{ labai_domain }}/privkey.pem"
+      when: labai_domain is defined and labai_domain | length > 0
+  when: labai_domain is defined and labai_domain | length > 0
+  tags: [tls]
+
+- name: Generate self-signed certificate when no domain configured
+  block:
+    - name: Create TLS directory
+      ansible.builtin.file:
+        path: /opt/labai/tls
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Generate self-signed certificate
+      ansible.builtin.command: >
+        openssl req -x509 -nodes -days 365 -newkey rsa:2048
+        -keyout /opt/labai/tls/labai.key
+        -out /opt/labai/tls/labai.crt
+        -subj "/CN=labai-selfsigned"
+      args:
+        creates: /opt/labai/tls/labai.crt
+
+    - name: Set TLS certificate paths for self-signed
+      ansible.builtin.set_fact:
+        tls_cert_path: "/opt/labai/tls/labai.crt"
+        tls_key_path: "/opt/labai/tls/labai.key"
+
+    - name: Warn about self-signed certificate
+      ansible.builtin.debug:
+        msg: >
+          WARNING: Using self-signed certificate.
+          Browsers will show security warnings.
+          Configure labai_domain variable to use Let's Encrypt.
+  when: labai_domain is not defined or labai_domain | length == 0
+  tags: [tls]
+
+- name: Template Nginx configuration for AnythingLLM
+  ansible.builtin.template:
+    src: anythingllm_nginx_conf.j2
+    dest: /etc/nginx/sites-available/anythingllm
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Nginx
+  tags: [tls]
+
+- name: Enable AnythingLLM Nginx site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/anythingllm
+    dest: /etc/nginx/sites-enabled/anythingllm
+    state: link
+  notify: Restart Nginx
+  tags: [tls]
+
+- name: Disable default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart Nginx
+  tags: [tls]
+
+- name: Test Nginx configuration
+  ansible.builtin.command: nginx -t
+  register: nginx_test
+  changed_when: false
+  tags: [tls]
+
+- name: Ensure Nginx is running and enabled
+  ansible.builtin.service:
+    name: nginx
+    state: started
+    enabled: true
+  tags: [tls]

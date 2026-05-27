@@ -1,0 +1,7 @@
+---
+anythingllm_container_name: "anythingllm"
+anythingllm_image: "mintplexlabs/anythingllm:latest"
+anythingllm_port: 3000
+anythingllm_memory_limit: "4g"
+anythingllm_admin_password: ""  # From vault
+anythingllm_storage_path: "/opt/labai/anythingllm/storage"

@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AUDIT_LOG="{{ audit_log_path }}"
+REPORT_DIR="{{ audit_report_dir }}"
+ANOMALY_LOG="/var/log/gateway/anomalies.log"
+DATE=$(date +%Y-%m-%d)
+REPORT_FILE="${REPORT_DIR}/${DATE}.json"
+
+mkdir -p "${REPORT_DIR}"
+
+if [ ! -f "${AUDIT_LOG}" ]; then
+    echo "{\"date\": \"${DATE}\", \"error\": \"audit log not found\", \"total_requests\": 0}" > "${REPORT_FILE}"
+    exit 0
+fi
+
+YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
+
+TOTAL_REQUESTS=0
+declare -A UNIQUE_USERS
+declare -A MODELS_USED
+PII_INCIDENTS=0
+TOTAL_TOKENS=0
+FAILED_REQUESTS=0
+
+while IFS= read -r line; do
+    TOTAL_REQUESTS=$((TOTAL_REQUESTS + 1))
+
+    USER=$(echo "${line}" | grep -oP '"user"\s*:\s*"\K[^"]+' || echo "unknown")
+    UNIQUE_USERS["${USER}"]=1
+
+    MODEL=$(echo "${line}" | grep -oP '"model"\s*:\s*"\K[^"]+' || echo "unknown")
+    MODELS_USED["${MODEL}"]=1
+
+    PII=$(echo "${line}" | grep -oP '"pii_detected"\s*:\s*\K(true|false)' || echo "false")
+    if [ "${PII}" = "true" ]; then
+        PII_INCIDENTS=$((PII_INCIDENTS + 1))
+    fi
+
+    TOKENS=$(echo "${line}" | grep -oP '"total_tokens"\s*:\s*\K[0-9]+' || echo "0")
+    TOTAL_TOKENS=$((TOTAL_TOKENS + TOKENS))
+
+    STATUS=$(echo "${line}" | grep -oP '"status"\s*:\s*"\K[^"]+' || echo "success")
+    if [ "${STATUS}" = "error" ] || [ "${STATUS}" = "failed" ]; then
+        FAILED_REQUESTS=$((FAILED_REQUESTS + 1))
+    fi
+done < <(grep "${DATE}" "${AUDIT_LOG}" 2>/dev/null || true)
+
+USER_COUNT=${#UNIQUE_USERS[@]}
+MODEL_LIST=$(printf '"%s",' "${!MODELS_USED[@]}" | sed 's/,$//')
+
+cat > "${REPORT_FILE}" <<EOF
+{
+  "date": "${DATE}",
+  "total_requests": ${TOTAL_REQUESTS},
+  "unique_users": ${USER_COUNT},
+  "models_used": [${MODEL_LIST}],
+  "pii_incidents": ${PII_INCIDENTS},
+  "total_tokens": ${TOTAL_TOKENS},
+  "failed_requests": ${FAILED_REQUESTS}
+}
+EOF
+
+YESTERDAY_REPORT="${REPORT_DIR}/${YESTERDAY}.json"
+VOLUME_ANOMALY=false
+FAILURE_ANOMALY=false
+ANOMALY_MSG=""
+
+if [ -f "${YESTERDAY_REPORT}" ]; then
+    YESTERDAY_REQUESTS=$(python3 -c "
+import json
+with open('${YESTERDAY_REPORT}') as f:
+    data = json.load(f)
+    print(data.get('total_requests', 0))
+" 2>/dev/null || echo "0")
+
+    if [ "${YESTERDAY_REQUESTS}" -gt 0 ]; then
+        THRESHOLD=$((YESTERDAY_REQUESTS * 2))
+        if [ "${TOTAL_REQUESTS}" -gt "${THRESHOLD}" ]; then
+            VOLUME_ANOMALY=true
+            ANOMALY_MSG="${ANOMALY_MSG}[${DATE}] Volume anomaly: ${TOTAL_REQUESTS} requests exceeds 2x daily average (${YESTERDAY_REQUESTS}). "
+        fi
+    fi
+fi
+
+if [ "${FAILED_REQUESTS}" -gt 10 ]; then
+    FAILURE_ANOMALY=true
+    ANOMALY_MSG="${ANOMALY_MSG}[${DATE}] Failure anomaly: ${FAILED_REQUESTS} failed requests detected (>10 threshold). "
+fi
+
+if [ "${VOLUME_ANOMALY}" = "true" ] || [ "${FAILURE_ANOMALY}" = "true" ]; then
+    echo "${ANOMALY_MSG}" >> "${ANOMALY_LOG}"
+fi

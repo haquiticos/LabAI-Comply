@@ -1,0 +1,56 @@
+---
+- name: Include Docker installation tasks
+  ansible.builtin.include_tasks: docker.yml
+  tags: [system]
+
+- name: Include NVIDIA toolkit tasks
+  ansible.builtin.include_tasks: nvidia_toolkit.yml
+  when: ollama_gpu_enabled | bool
+  tags: [system]
+
+- name: Configure Docker daemon
+  become: true
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "log-driver": "{{ docker_log_driver }}",
+        "log-opts": {
+          "max-size": "{{ docker_log_max_size }}",
+          "max-file": "{{ docker_log_max_file }}"
+        }
+      }
+    mode: "0644"
+  notify: Restart docker
+  tags: [system]
+
+- name: Check if labai_net Docker network already exists
+  ansible.builtin.shell: >
+    docker network ls --filter name={{ labai_network_name }} --format '{{ '{{' }}.Name{{ '}}' }}'
+  register: _labai_net_check
+  changed_when: false
+  tags: [system]
+
+- name: Create labai_net Docker network
+  become: true
+  ansible.builtin.command: >
+    docker network create
+    --driver bridge
+    --subnet {{ labai_subnet }}
+    {{ labai_network_name }}
+  when: _labai_net_check.stdout != labai_network_name
+  changed_when: true
+  tags: [system]
+
+- name: Create required directories
+  become: true
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - /opt/labai
+    - /opt/labai/config
+    - /opt/labai/data
+    - /var/log/gateway
+  tags: [system]
