@@ -61,9 +61,9 @@ Pesquisador → AnythingLLM (interface)
                   ↓ (todo acesso passa aqui)
             FastAPI Gateway (proxy + audit)
                ↙              ↘
-         Ollama (local)    OpenAI (cloud)
-                              ↓
-                      Presidio (PII scanning)
+         Ollama (local)    Presidio (PII scanning)
+                              ↓ (anonimiza antes de enviar)
+                          OpenAI (cloud)
 ```
 
 O Gateway é o componente central. Todo acesso a IA — local ou cloud — passa por ele. Ele identifica o workspace, registra a interação no audit log, e (no path cloud) escaneia PII antes de enviar para a API externa.
