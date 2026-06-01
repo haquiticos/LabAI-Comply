@@ -1,6 +1,6 @@
-### **EMENTA: Metodologia e Escrita Científica na Era da Inteligência Artificial**
+# **Metodologia e Escrita Científica na Era da Inteligência Artificial**
 
-# EMENTA 1: GRADUAÇÃO
+## EMENTA 1: GRADUAÇÃO
 
 **Disciplina:** Metodologia e Escrita Científica na Era da IA (Fundamentos)
 **Público:** Alunos de Graduação (Iniciação Científica e Trabalhos de Conclusão de Curso)
@@ -36,7 +36,7 @@ Aulas expositivas dialogadas e oficinas de escrita em laboratório. Os alunos el
 
 ---
 
-# EMENTA 2: PÓS-GRADUAÇÃO (MESTRADO E DOUTORADO)
+## EMENTA 2: PÓS-GRADUAÇÃO (MESTRADO E DOUTORADO)
 
 **Disciplina:** Metodologia e Escrita Científica na Era da IA (Governança e Fluxos Avançados)
 **Público:** Alunos de Mestrado e Doutorado
