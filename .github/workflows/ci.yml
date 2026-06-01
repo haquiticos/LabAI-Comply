@@ -42,6 +42,8 @@ jobs:
         run: |
           mkdir -p ~/.ansible/collections/labai
           cp -r "$GITHUB_WORKSPACE" ~/.ansible/collections/labai/comply
+          # Symlink roles into playbooks/ so Ansible finds them by short name
+          ln -s ../roles ~/.ansible/collections/labai/comply/playbooks/roles
 
       - name: Syntax check playbooks/setup_lab.yml
         run: |
