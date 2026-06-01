@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentação
+    url: https://github.com/labai/comply#readme
+    about: Consulte a documentação antes de abrir uma issue.
+  - name: Discussões
+    url: https://github.com/labai/comply/discussions
+    about: Perguntas, ideias e discussões gerais sobre a coleção.

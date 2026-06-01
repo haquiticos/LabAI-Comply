@@ -1,0 +1,90 @@
+---
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ansible-lint:
+    name: Ansible Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ansible-lint
+        run: pip install ansible-lint
+
+      - name: Run ansible-lint on roles
+        run: ansible-lint roles/
+        continue-on-error: true
+
+      - name: Run ansible-lint on playbooks
+        run: ansible-lint playbooks/
+        continue-on-error: true
+
+  syntax-check:
+    name: Ansible Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ansible and community.docker
+        run: |
+          pip install ansible
+          ansible-galaxy collection install community.docker -p collections
+
+      - name: Install collection locally so imports resolve
+        run: |
+          mkdir -p ~/.ansible/collections/labai
+          cp -r "$GITHUB_WORKSPACE" ~/.ansible/collections/labai/comply
+
+      - name: Syntax check playbooks/setup_lab.yml
+        run: |
+          cd ~/.ansible/collections/labai/comply
+          ansible-playbook playbooks/setup_lab.yml --syntax-check \
+            -e '{"ansible_host": "localhost"}'
+
+  python-lint:
+    name: Python Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Extract Python from Jinja2 template and lint
+        run: |
+          # Strip Jinja2 delimiters to get lintable Python, then run ruff
+          sed -E 's/\{\{.+}}//g; s/\{%[^%]+%}//g; s/\{#.+#}//g' \
+            templates/gateway_main_py.j2 > /tmp/gateway_extracted.py
+          ruff check /tmp/gateway_extracted.py --ignore E999,F401,F841 \
+            --select E,W,F --line-length 120 || true
+          echo "::notice::Python lint of gateway template completed (non-blocking)"
+
+  yaml-lint:
+    name: YAML Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Run yamllint
+        run: |
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 200}, truthy: {check-keys: false}}}' \
+            -f parsable \
+            . || true

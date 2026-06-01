@@ -1,7 +1,7 @@
 ---
 namespace: labai
 name: comply
-version: 4.1.0
+version: 0.2.0
 readme: README.md
 authors:
   - LabAI-Comply Team
@@ -22,7 +22,7 @@ tags:
   - anythingllm
 dependencies:
   community.docker: ">=3.0.0"
-repository: https://github.com/labai/comply
+repository: https://github.com/haquiticos/LabAI-Comply
 build_ignore:
   - "*.pyc"
   - "__pycache__"

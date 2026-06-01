@@ -1,4 +1,10 @@
-# LabAI-Comply 
+# LabAI-Comply
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Ansible Collection](https://img.shields.io/badge/Ansible-labai.comply-blue.svg)](https://github.com/haquiticos/LabAI-Comply)
+[![Version](https://img.shields.io/badge/version-0.2.0-green.svg)](CHANGELOG.md)
+[![Contributions Welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 > **Em desenvolvimento...**
 
 
@@ -182,7 +188,7 @@ ansible-playbook labai.comply.setup_lab --tags "anythingllm" \
 
 ## Contribuindo
 
-Contribuições são bem-vindas. O projeto é MIT e roda em qualquer Ubuntu com Ansible.
+Contribuições são bem-vindas. O projeto é MIT e roda em qualquer Ubuntu com Ansible. Para o guia completo de contribuição, veja [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Áreas que precisam de contribuição
 
@@ -256,6 +262,10 @@ MIT. Use, modifique, distribua. Veja [LICENSE](LICENSE).
 
 ## Links
 
-- **Issues e feature requests:** [GitHub Issues](https://github.com/labai/comply/issues)
+- **Issues e feature requests:** [GitHub Issues](https://github.com/haquiticos/LabAI-Comply/issues)
 - **PRD completo:** [`PRD-LabAI-Comply-v4.md`](PRD-LabAI-Comply-v4.md) — especificação técnica detalhada de todos os componentes
 - **Vault template:** [`vault.yml.example`](vault.yml.example)
+- **Guia de contribuição:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Segurança:** [SECURITY.md](SECURITY.md)
+- **Código de conduta:** [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+- **Histórico de versões:** [CHANGELOG.md](CHANGELOG.md)
