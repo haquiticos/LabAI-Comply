@@ -128,7 +128,7 @@ async def detect_pii(text: str, language: str = "pt") -> tuple[list, str, dict]:
         async with httpx.AsyncClient(timeout=10.0) as client:
             # Step 1 — analyse
             analyze_resp = await client.post(
-                "http://presidio-analyzer:5002/analyze",
+                "http://presidio-analyzer:3000/analyze",
                 json={
                     "text": text,
                     "language": language,
@@ -507,7 +507,7 @@ async def health():
     # Check Presidio Analyzer
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("http://presidio-analyzer:5002/health")
+            resp = await client.get("http://presidio-analyzer:3000/health")
             checks["presidio_analyzer"] = "up" if resp.status_code == 200 else "degraded"
     except Exception:
         checks["presidio_analyzer"] = "down"

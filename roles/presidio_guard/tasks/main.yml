@@ -52,11 +52,11 @@
     --restart unless-stopped
     --memory {{ presidio_memory_limit }}
     -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
-    --health-cmd "curl -f http://localhost:5002/health"
+    --health-cmd "curl -f http://localhost:3000/health"
     --health-interval 30s
     --health-timeout 10s
     --health-retries 3
-    -p 5002:5002
+    -p 5002:3000
     -e PRESIDIO_LANGUAGE={{ presidio_language }}
     presidio-analyzer-pt
   when: _presidio_analyzer_status.stdout == ""
@@ -96,14 +96,15 @@
   delay: 5
   tags: [presidio]
 
-- name: Wait for Presidio Anonymizer to be healthy
-  ansible.builtin.uri:
-    url: "http://localhost:5001/health"
-    method: GET
-  register: _anonymizer_health
-  until: _anonymizer_health.status == 200
-  retries: 15
-  delay: 5
+- name: Register custom Brazilian PII recognizers
+  ansible.builtin.script: register_presidio_recognizers.py http://localhost:5002 /opt/labai/presidio/recognizers.yml
+  register: _recognizer_registration
+  changed_when: "'Registered' in _recognizer_registration.stdout"
+  tags: [presidio]
+
+- name: Display recognizer registration result
+  ansible.builtin.debug:
+    msg: "{{ _recognizer_registration.stdout_lines }}"
   tags: [presidio]
 
 - name: Verify Presidio Analyzer connectivity
