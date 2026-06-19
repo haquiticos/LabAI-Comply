@@ -87,7 +87,7 @@
 - name: Add current user to docker group
   become: true
   ansible.builtin.user:
-    name: "{{ ansible_user }}"
+    name: "{{ ansible_user_id }}"
     groups: docker
     append: true
   when: docker_add_user_to_group | default(true)
