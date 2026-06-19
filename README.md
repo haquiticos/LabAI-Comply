@@ -90,26 +90,70 @@ O Gateway é o componente central. Todo acesso a IA — local ou cloud — passa
 |:---|:---|:---|
 | SO | Ubuntu 22.04 LTS | Ubuntu 22.04 LTS |
 | vCPUs | 4 | 8+ |
-| RAM | 8 GB | 32 GB+ |
+| RAM | 8 GB ([modo demo](#modo-demo-low-spec--cloud-only)) / 12 GB (completo) | 32 GB+ |
 | Disco em `/opt` | 20 GB livres | 50 GB+ |
 | GPU (opcional) | NVIDIA driver 525+ | RTX 3090 / A100 |
 
-### Instalação
+### Pré-requisitos do host que executa o Ansible
+
+| Item | Como instalar |
+|:---|:---|
+| Ansible + coleção Docker | `pip install ansible community.docker` |
+| Docker | instalado e em execução no servidor alvo |
+| Privilégio `sudo` no alvo | o playbook roda com `become: true`; use `--ask-become-pass` (sudo com senha) ou configure `NOPASSWD` no sudoers |
+
+### 1. Instalar a coleção
+
+Escolha **um** dos caminhos (sem a coleção instalada, o FQCN `labai.comply.setup_lab` não resolve e aparece o erro `the playbook: labai.comply.setup_lab could not be found`):
+
+**A. Da Ansible Galaxy** — produção, versão publicada:
 
 ```bash
-# 1. Instale a coleção
 ansible-galaxy collection install labai.comply
+```
 
-# 2. Copie e edite o vault com suas secrets
+**B. De um clone local (symlink)** — desenvolvimento / acompanhar o `main`:
+
+```bash
+git clone https://github.com/haquiticos/LabAI-Comply.git
+cd LabAI-Comply
+mkdir -p ~/.ansible/collections/ansible_collections/labai
+ln -s "$PWD" ~/.ansible/collections/ansible_collections/labai/comply
+cd ~/LabAI-Comply   # todos os comandos abaixo rodam daqui
+```
+
+**C. Direto pelo caminho do arquivo** — sem instalar como coleção:
+
+```bash
+ansible-playbook playbooks/setup_lab.yml -i localhost, ...
+```
+
+### 2. Configurar secrets (vault)
+
+```bash
 cp vault.yml.example vault.yml
+# Edite vault.yml com valores reais:
+#   openai_api_key:             "<sua-chave-do-provider-cloud>"
+#   anythingllm_admin_password: "<senha-forte>"
+#   workspace_api_keys:         chaves por workspace (identificam o ws no gateway)
 ansible-vault encrypt vault.yml
-# Edite: openai_api_key, anythingllm_admin_password, workspace_api_keys
+# Anote a senha do vault — ela é pedida em todos os comandos abaixo:
+echo 'minha-senha-vault' > ~/.vault_pass && chmod 600 ~/.vault_pass
+```
 
-# 3. Execute o playbook
+### 3. Executar o playbook
+
+O playbook é referenciado pelo FQCN `labai.comply.setup_lab`. Para rodar
+**localmente na própria máquina** (típico em lab/demo):
+
+```bash
 ansible-playbook labai.comply.setup_lab \
-  -i your-server, \
+  -i localhost, \
+  --connection local \
   --vault-password-file ~/.vault_pass \
-  --extra-vars '{
+  --ask-become-pass \
+  -e '@vault.yml' \
+  -e '{
     "researchers": [
       {"name": "Maria Silva", "email": "maria@lab.edu.br"},
       {"name": "João Santos", "email": "joao@lab.edu.br"}
@@ -118,14 +162,86 @@ ansible-playbook labai.comply.setup_lab \
   }'
 ```
 
-O playbook detecta o hardware, escolhe o melhor modelo, provisiona tudo e cria as contas dos pesquisadores. Em ~15 minutos o ambiente está no ar.
+Para rodar **remotamente via SSH**, troque o inventário:
+
+```bash
+ansible-playbook labai.comply.setup_lab \
+  -i labai.pesquisa.uf.br, \
+  -u ubuntu \
+  --vault-password-file ~/.vault_pass \
+  --ask-become-pass \
+  -e '@vault.yml' \
+  -e '{"labai_domain": "labai.pesquisa.uf.br"}'
+```
+
+O playbook detecta o hardware, escolhe o melhor modelo Ollama, provisiona
+todos os containers e cria as contas dos pesquisadores. Em ~15 minutos o
+ambiente está no ar (5-10 min em modo demo).
+
+### Cloud LLM provider
+
+O path `/cloud/` do gateway aceita qualquer provider **compatível com a
+OpenAI API** — basta trocar `openai_base_url` e `cloud_model_default`:
+
+| Provider | `openai_base_url` | Modelo exemplo |
+|:---|:---|:---|
+| OpenAI | `https://api.openai.com/v1` | `gpt-4` |
+| z.ai (GLM) | `https://api.z.ai/api/paas/v4` | `glm-5.2` |
+| BigModel | `https://open.bigmodel.cn/api/paas/v4` | `glm-4-plus` |
+
+```bash
+... -e '{
+  "openai_base_url": "https://api.z.ai/api/paas/v4",
+  "cloud_model_default": "glm-5.2"
+}'
+```
+
+### Modo demo (low-spec / cloud-only)
+
+Para máquinas com **8 GB RAM / sem GPU** — pula o Ollama, reduz os limites
+de memória dos containers e usa um cloud LLM (z.ai GLM-5.2 no exemplo):
+
+```bash
+ansible-playbook labai.comply.setup_lab \
+  -i localhost, \
+  --connection local \
+  --vault-password-file ~/.vault_pass \
+  --ask-become-pass \
+  -e '@vault.yml' \
+  -e '{
+    "skip_ollama": true,
+    "skip_anythingllm_api": true,
+    "demo_mode": true,
+    "openai_base_url": "https://api.z.ai/api/paas/v4",
+    "cloud_model_default": "glm-5.2",
+    "workspace_registry": {
+      "ws-concepcao": {"finalidade": "concepcao e planejamento da pesquisa", "fase_pesquisa": "concepcao", "provider": "openai", "model": "glm-5.2", "path": "/cloud"},
+      "ws-redacao":   {"finalidade": "redacao e revisao de texto",            "fase_pesquisa": "redacao",   "provider": "openai", "model": "glm-5.2", "path": "/cloud"}
+    },
+    "workspace_api_keys": {
+      "ws-concepcao": "key-concepcao-001",
+      "ws-redacao":   "key-redacao-001"
+    },
+    "presidio_memory_limit": "800m",
+    "gateway_memory_limit": "384m",
+    "anythingllm_memory_limit": "1500m"
+  }'
+```
+
+Walkthrough completo (setup manual do AnythingLLM, validação pós-deploy,
+GIFs, troubleshooting): veja **[`docs/DEMO.md`](docs/DEMO.md)**.
 
 ### Modo headless (sem interação)
+
+Pula os prompts de seleção de modelo e fixa o Ollama escolhido:
 
 ```bash
 ansible-playbook labai.comply.setup_lab \
   -i your-server, \
-  --extra-vars "headless=true ollama_model_selected=qwen2.5:14b-instruct-q4_K_M"
+  --vault-password-file ~/.vault_pass \
+  --ask-become-pass \
+  -e '@vault.yml' \
+  -e '{"headless": true, "ollama_model_selected": "qwen2.5:14b-instruct-q4_K_M"}'
 ```
 
 ---
@@ -169,19 +285,28 @@ Roles Ansible (provisionamento):
 └── backup              — backup diário com rotação 7/4/3
 ```
 
-**Atualizações granulares via tags:**
+**Atualizações granulares via tags** — todas exigem `--vault-password-file`,
+`-e '@vault.yml'` e `-i <host>,` como no comando completo. Tags disponíveis:
+`hardware`, `system`, `tls`, `ollama`, `presidio`, `gateway`, `anythingllm`,
+`audit`, `backup`, `validate`.
 
 ```bash
 # Atualizar só o Ollama
-ansible-playbook labai.comply.setup_lab --tags "ollama"
+ansible-playbook labai.comply.setup_lab -i your-server, \
+  --vault-password-file ~/.vault_pass --ask-become-pass \
+  --tags "ollama" -e '@vault.yml'
 
 # Trocar modelo sem tocar no resto
-ansible-playbook labai.comply.setup_lab --tags "ollama" \
-  --extra-vars "ollama_model_selected=llama3.1:70b-instruct-q4_K_M"
+ansible-playbook labai.comply.setup_lab -i your-server, \
+  --vault-password-file ~/.vault_pass --ask-become-pass \
+  --tags "ollama" -e '@vault.yml' \
+  -e '{"ollama_model_selected": "llama3.1:70b-instruct-q4_K_M"}'
 
 # Adicionar pesquisadores
-ansible-playbook labai.comply.setup_lab --tags "anythingllm" \
-  --extra-vars '{"researchers": [{"name": "Nova Pessoa", "email": "nova@lab.edu.br"}]}'
+ansible-playbook labai.comply.setup_lab -i your-server, \
+  --vault-password-file ~/.vault_pass --ask-become-pass \
+  --tags "anythingllm" -e '@vault.yml' \
+  -e '{"researchers": [{"name": "Nova Pessoa", "email": "nova@lab.edu.br"}]}'
 ```
 
 ---

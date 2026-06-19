@@ -1,10 +1,12 @@
 ---
 {% for ws_name, ws_config in workspace_registry.items() %}
+{% if not (skip_ollama | default(false) | bool) or ws_config.provider | default('ollama') != 'ollama' %}
 {{ ws_name }}:
   finalidade: "{{ ws_config.finalidade | default('nao especificada') }}"
   fase_pesquisa: "{{ ws_config.fase_pesquisa | default('nao especificada') }}"
   provider: "{{ ws_config.provider | default('ollama') }}"
-  model: "{{ ws_config.model | default(ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M')) }}"
-  path: "{{ ws_config.path | default('/local') }}"
+  model: "{{ ws_config.model | default(cloud_model_default if ws_config.provider | default('ollama') != 'ollama' else ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M')) }}"
+  path: "{{ ws_config.path | default('/cloud' if ws_config.provider | default('ollama') != 'ollama' else '/local') }}"
   api_key: "{{ (workspace_api_keys | default({})).get(ws_name, 'key-' + ws_name + '-001') }}"
+{% endif %}
 {% endfor %}
