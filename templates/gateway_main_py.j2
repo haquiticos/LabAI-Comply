@@ -20,6 +20,7 @@ from starlette.background import BackgroundTask
 
 # Configuration from environment
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL_SELECTED", "qwen2.5:14b-instruct-q4_K_M")
 AUDIT_LOG_PATH = os.environ.get("AUDIT_LOG_PATH", "/var/log/gateway/audit.jsonl")
 WORKSPACE_REGISTRY_PATH = os.environ.get("WORKSPACE_REGISTRY_PATH", "/app/workspace_registry.yml")
@@ -364,7 +365,7 @@ async def cloud_chat_completions(request: Request):
         async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
             upstream_req = client.build_request(
                 "POST",
-                "https://api.openai.com/v1/chat/completions",
+                f"{OPENAI_BASE_URL}/chat/completions",
                 content=forward_body,
                 headers=headers
             )
@@ -637,7 +638,12 @@ async def audit_report(
     model_display_names = {
         "qwen2.5:14b-instruct-q4_K_M": "Qwen2.5 14B (Ollama local)",
         "gpt-4": "GPT-4 (OpenAI)",
-        "gpt-3.5-turbo": "GPT-3.5 Turbo (OpenAI)"
+        "gpt-3.5-turbo": "GPT-3.5 Turbo (OpenAI)",
+        "glm-5.2": "GLM-5.2 (z.ai)",
+        "glm-4.7": "GLM-4.7 (z.ai)",
+        "glm-4.6": "GLM-4.6 (z.ai)",
+        "glm-4.5": "GLM-4.5 (z.ai)",
+        "glm-4-plus": "GLM-4 Plus (z.ai)"
     }
 
     # ----- CSV format -----
@@ -708,7 +714,12 @@ async def audit_report(
         pdf_model_names = {
             "qwen2.5:14b-instruct-q4_K_M": "Qwen2.5 14B (Ollama)",
             "gpt-4": "GPT-4 (OpenAI)",
-            "gpt-3.5-turbo": "GPT-3.5 (OpenAI)"
+            "gpt-3.5-turbo": "GPT-3.5 (OpenAI)",
+            "glm-5.2": "GLM-5.2 (z.ai)",
+            "glm-4.7": "GLM-4.7 (z.ai)",
+            "glm-4.6": "GLM-4.6 (z.ai)",
+            "glm-4.5": "GLM-4.5 (z.ai)",
+            "glm-4-plus": "GLM-4 Plus (z.ai)"
         }
 
         for (d, model, provider, finalidade, fase), agg in sorted(aggregates.items()):

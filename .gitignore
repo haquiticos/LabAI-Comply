@@ -5,3 +5,4 @@ vault.yml
 *.pyc
 __pycache__/
 .venv/
+.ansible/*

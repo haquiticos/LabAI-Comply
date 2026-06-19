@@ -46,8 +46,8 @@ while IFS= read -r line; do
     fi
 done < <(grep "${DATE}" "${AUDIT_LOG}" 2>/dev/null || true)
 
-USER_COUNT=${#UNIQUE_USERS[@]}
-MODEL_LIST=$(printf '"%s",' "${!MODELS_USED[@]}" | sed 's/,$//')
+USER_COUNT={% raw %}${#UNIQUE_USERS[@]}{% endraw %}
+MODEL_LIST=$(printf '"%s",' {% raw %}"${!MODELS_USED[@]}"{% endraw %} | sed 's/,$//')
 
 cat > "${REPORT_FILE}" <<EOF
 {

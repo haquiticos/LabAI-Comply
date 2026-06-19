@@ -1,5 +1,17 @@
 ---
 model_matrix:
+  - profile: "Demo (CPU)"
+    min_ram_mb: 4096
+    max_ram_mb: 8192
+    vram_required_mb: 0
+    options:
+      - tag: "qwen2.5:0.5b-instruct-q4_K_M"
+        disk_gb: 1
+        model_ram_mb: 800
+      - tag: "gemma2:2b-instruct-q4_K_M"
+        disk_gb: 2
+        model_ram_mb: 2048
+
   - profile: "Basico (CPU)"
     min_ram_mb: 8192
     max_ram_mb: 16384

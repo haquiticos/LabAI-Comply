@@ -11,11 +11,12 @@
     - name: Validar requisitos minimos de hardware
       ansible.builtin.assert:
         that:
-          - ansible_memtotal_mb >= 8192
+          - ansible_memtotal_mb >= (min_ram_mb | default(6144))
           - ansible_facts['mounts'] | selectattr('mount', 'equalto', '/opt') | list | length > 0
             or (ansible_facts['mounts'] | map(attribute='mount') | select('match', '^/$') | list | length > 0)
         fail_msg: >
-          Hardware insuficiente. Requerido: 8 GB RAM, 20 GB livres em /opt.
+          Hardware insuficiente. Requerido: {{ min_ram_mb | default(6144) }} MB RAM,
+          {{ (min_disk_gb | default(8)) }} GB livres em /opt.
           Detectado: {{ ansible_memtotal_mb | int }} MB RAM.
         quiet: true
 
@@ -32,15 +33,16 @@
     - name: Validar espaco em disco
       ansible.builtin.assert:
         that:
-          - (opt_free_space_kb.stdout | int) > 20971520  # 20 GB in KB
+          - (opt_free_space_kb.stdout | int) > ((min_disk_gb | default(8)) | int * 1048576)
         fail_msg: >
-          Espaco insuficiente em disco. Requerido: 20 GB livres em /opt.
+          Espaco insuficiente em disco. Requerido: {{ min_disk_gb | default(8) }} GB livres em /opt.
           Detectado: {{ (opt_free_space_kb.stdout | int / 1048576) | round(1) }} GB.
         quiet: true
 
   roles:
     - role: hardware_profiling
       tags: [hardware]
+      when: not (skip_ollama | default(false) | bool)
 
     - role: system_setup
       tags: [system]
@@ -50,6 +52,7 @@
 
     - role: ollama_local
       tags: [ollama]
+      when: not (skip_ollama | default(false) | bool)
 
     - role: presidio_guard
       tags: [presidio]
@@ -83,6 +86,7 @@
           retries: 5
           delay: 5
           failed_when: false
+          when: not (skip_ollama | default(false) | bool)
 
         - name: Verificar saude do Gateway
           ansible.builtin.uri:
@@ -111,6 +115,7 @@
           changed_when: false
           failed_when: >
             ollama_model_selected not in _val_model.stdout
+          when: not (skip_ollama | default(false) | bool)
 
         - name: Verificar audit log acessivel
           ansible.builtin.stat:
@@ -124,18 +129,23 @@
               ========================================
               LabAI-Comply Deploy Concluido
               ========================================
+              {% if not (skip_ollama | default(false) | bool) %}
               Modelo Ollama: {{ ollama_model_selected }}
               GPU habilitada: {{ ollama_gpu_enabled }}
               RAM limit (Ollama): {{ ollama_ram_limit }}
+              {% else %}
+              Ollama: SKIPPED (skip_ollama=true)
+              {% endif %}
+              Cloud LLM: {{ openai_base_url | default('https://api.openai.com/v1') }}
               Gateway: http://localhost:{{ gateway_port }}
-              AnythingLLM: https://{{ labai_domain | default('localhost') }}
-              Workspaces configurados: {{ workspace_registry | length }}
+              AnythingLLM: {% if labai_domain | default('') %}https://{{ labai_domain }}{% else %}http://localhost:{{ anythingllm_port | default(3000) }}{% endif %}
+              Workspaces no registry: {{ workspace_registry | length }}
               Pesquisadores: {{ researchers | length }}
               ========================================
               Status dos Servicos:
-                Ollama: {{ 'OK' if _val_ollama.status == 200 else 'FALHOU (' ~ _val_ollama.status ~ ')' }}
+                Ollama: {% if skip_ollama | default(false) | bool %}SKIPPED{% else %}{{ 'OK' if _val_ollama.status == 200 else 'FALHOU (' ~ _val_ollama.status ~ ')' }}{% endif %}
                 Gateway: {{ 'OK' if _val_gateway.status == 200 else 'FALHOU (' ~ _val_gateway.status ~ ')' }}
                 AnythingLLM: {{ 'OK' if _val_anythingllm.status == 200 else 'FALHOU (' ~ _val_anythingllm.status ~ ')' }}
-                Modelo: {{ 'OK' if _val_model is succeeded else 'FALHOU' }}
+                {% if not (skip_ollama | default(false) | bool) %}Modelo: {{ 'OK' if _val_model is succeeded else 'FALHOU' }}{% endif %}
                 Audit Log: {{ 'OK' if _val_audit_log.stat.exists else 'NAO CRIADO' }}
               ========================================

@@ -7,11 +7,22 @@ ollama_num_parallel: 4
 ollama_keep_alive: "30m"
 headless: false
 
+# === Demo / Low-spec mode ===
+# skip_ollama: true  -> nao provisiona Ollama (usar quando RAM < 12GB)
+# skip_anythingllm_api: true -> nao tenta configurar AnythingLLM via API (setup manual via browser)
+skip_ollama: false
+skip_anythingllm_api: false
+demo_mode: false
+min_ram_mb: 6144
+min_disk_gb: 8
+
 # === Pesquisadores ===
 # Formato: [{"name": "Maria", "email": "maria@lab.edu.br"}, ...]
 researchers: []
 
 # === Workspace Registry (CNPq Art. 9o, I, c) ===
+# Quando skip_ollama=true, workspaces com provider=ollama sao automaticamente omitidos
+# pelo template gateway_workspace_registry_yml.j2 (nao precisa editar aqui).
 workspace_registry:
   ws-analise-dados:
     finalidade: "analise e processamento de dados"
@@ -66,6 +77,15 @@ gateway_port: 8000
 gateway_max_body_mb: 10
 gateway_request_timeout: 120
 
+# === Cloud LLM Provider ===
+# OpenAI:    https://api.openai.com/v1
+# z.ai:      https://api.z.ai/api/paas/v4
+# BigModel:  https://open.bigmodel.cn/api/paas/v4
+# Outros providers compativeis com a OpenAI API tambem funcionam.
+openai_base_url: "https://api.openai.com/v1"
+# Modelo cloud padrao usado pelos workspaces se nao especificado em workspace_registry
+cloud_model_default: "gpt-4"
+
 # === TLS ===
 labai_domain: ""  # Vazio = auto-assinado
 
@@ -81,6 +101,10 @@ backup_dir: "/opt/labai/backups"
 backup_ollama_model: false
 
 # === Container Resources ===
+# Defaults de producao. Em demo_mode, sobrescrever via --extra-vars:
+#   presidio_memory_limit: "800m"
+#   gateway_memory_limit: "384m"
+#   anythingllm_memory_limit: "1500m"
 presidio_memory_limit: "2g"
 gateway_memory_limit: "1g"
 anythingllm_memory_limit: "4g"

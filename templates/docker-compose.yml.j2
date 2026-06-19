@@ -4,6 +4,7 @@ networks:
     name: labai_net
 
 services:
+{% if not (skip_ollama | default(false) | bool) %}
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
@@ -34,6 +35,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+{% endif %}
 
   presidio-analyzer:
     build:
@@ -89,6 +91,7 @@ services:
       - labai_net
     environment:
       - OPENAI_API_KEY={{ openai_api_key | default('') }}
+      - OPENAI_BASE_URL={{ openai_base_url | default('https://api.openai.com/v1') }}
       - OLLAMA_MODEL_SELECTED={{ ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M') }}
       - GATEWAY_LOG_LEVEL={{ gateway_log_level | default('info') }}
       - GATEWAY_MAX_BODY_MB={{ gateway_max_body_mb | default(10) }}
@@ -109,8 +112,10 @@ services:
       - /opt/labai/gateway/workspace_registry.yml:/app/workspace_registry.yml:ro
       - /var/log/gateway:/var/log/gateway
     depends_on:
+{% if not (skip_ollama | default(false) | bool) %}
       ollama:
         condition: service_healthy
+{% endif %}
       presidio-analyzer:
         condition: service_healthy
       presidio-anonymizer:

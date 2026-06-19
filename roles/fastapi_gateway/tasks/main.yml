@@ -93,6 +93,7 @@
     cpus: 2.0
     env:
       OPENAI_API_KEY: "{{ openai_api_key | default('') }}"
+      OPENAI_BASE_URL: "{{ openai_base_url | default('https://api.openai.com/v1') }}"
       OLLAMA_MODEL_SELECTED: "{{ ollama_model_selected | default('qwen2.5:14b-instruct-q4_K_M') }}"
       GATEWAY_LOG_LEVEL: "{{ gateway_log_level | default('info') }}"
       GATEWAY_MAX_BODY_MB: "{{ gateway_max_body_mb | default(10) | string }}"
