@@ -48,7 +48,7 @@ services:
     networks:
       - labai_net
     environment:
-      - PRESIDIO_LANGUAGE={{ presidio_language | default('pt') }}
+      - ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
     deploy:
       resources:
         limits:
@@ -59,7 +59,7 @@ services:
       timeout: 10s
       retries: 3
     volumes:
-      - /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+      - /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
 
   presidio-anonymizer:
     image: mcr.microsoft.com/presidio-anonymizer:latest

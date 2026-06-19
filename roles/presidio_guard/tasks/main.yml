@@ -29,11 +29,12 @@
   register: _presidio_build
   tags: [presidio]
 
-- name: Template custom recognizers config
+- name: Template unified Presidio analyzer configuration
   ansible.builtin.template:
-    src: presidio_recognizers.yml.j2
-    dest: /opt/labai/presidio/recognizers.yml
+    src: presidio_analyzer.yml.j2
+    dest: /opt/labai/presidio/analyzer.yml
     mode: "0644"
+  register: _presidio_analyzer_conf
   tags: [presidio]
 
 - name: Check if Presidio Analyzer container is running
@@ -44,6 +45,14 @@
   changed_when: false
   tags: [presidio]
 
+- name: Recreate Presidio Analyzer container when configuration changes
+  ansible.builtin.shell: >
+    docker rm -f {{ presidio_analyzer_container }}
+  when:
+    - _presidio_analyzer_status.stdout != ""
+    - _presidio_analyzer_conf is changed
+  tags: [presidio]
+
 - name: Deploy Presidio Analyzer container
   ansible.builtin.shell: >
     docker run -d
@@ -51,16 +60,15 @@
     --network labai_net
     --restart unless-stopped
     --memory {{ presidio_memory_limit }}
-    -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+    -v /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
     --health-cmd "curl -f http://localhost:3000/health"
     --health-interval 30s
     --health-timeout 10s
     --health-retries 3
     -p 5002:3000
-    -e PRESIDIO_LANGUAGE={{ presidio_language }}
-    -e RECOGNIZER_REGISTRY_CONF_FILE=/usr/share/presidio/recognizers.yml
+    -e ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
     presidio-analyzer-pt
-  when: _presidio_analyzer_status.stdout == ""
+  when: _presidio_analyzer_status.stdout == "" or _presidio_analyzer_conf is changed
   tags: [presidio]
 
 - name: Check if Presidio Anonymizer container is running
