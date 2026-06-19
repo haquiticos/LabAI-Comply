@@ -97,7 +97,7 @@
   delay: 5
   tags: [presidio]
 
-- name: Verify custom recognizers loaded from mounted YAML
+- name: Verify again custom recognizers loaded from mounted YAML
   ansible.builtin.uri:
     url: "http://localhost:5002/recognizers?language={{ presidio_language }}"
     method: GET
