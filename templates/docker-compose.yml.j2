@@ -138,6 +138,8 @@ services:
         limits:
           memory: {{ anythingllm_memory_limit | default('4g') }}
     environment:
+      # STORAGE_DIR must match the volume mount; absence crashes the app.
+      - STORAGE_DIR=/app/server/storage
       - OPEN_AI_KEY=
       - OPENAI_API_BASE_URL=http://gateway:8000/cloud
       - EMBEDDING_ENGINE=local

@@ -33,6 +33,10 @@
     volumes:
       - "{{ anythingllm_storage_path }}:/app/server/storage"
     env:
+      # STORAGE_DIR is required by the AnythingLLM entrypoint; without it
+      # the app crashes with ERR_INVALID_ARG_TYPE at path.resolve(undefined)
+      # and the container enters a restart loop. Must match the volume mount.
+      STORAGE_DIR: "/app/server/storage"
       OPEN_AI_KEY: ""
       OPENAI_API_BASE_URL: "http://gateway:8000/cloud"
       EMBEDDING_ENGINE: "local"
