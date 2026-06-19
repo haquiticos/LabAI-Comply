@@ -1,33 +1,37 @@
 ---
+# Presidio Analyzer recognizer registry configuration.
+# Format reference: https://github.com/microsoft/presidio/blob/main/presidio-analyzer/presidio_analyzer/conf/example_recognizers.yaml
+# Loaded by the analyzer container via RECOGNIZER_REGISTRY_CONF_FILE env var.
 recognizers:
   - name: "BR_CPF_Recognizer"
-    entity_type: "BR_CPF"
+    supported_entity: "BR_CPF"
+    supported_language: "pt"
     patterns:
       - name: "CPF with separators"
         regex: "\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}"
         score: 0.85
-    context_phrases:
+    context:
       - "CPF"
       - "cadastro de pessoa física"
       - "número de CPF"
       - "inscrição"
-    language: "pt"
 
   - name: "BR_CNPJ_Recognizer"
-    entity_type: "BR_CNPJ"
+    supported_entity: "BR_CNPJ"
+    supported_language: "pt"
     patterns:
       - name: "CNPJ with separators"
         regex: "\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
         score: 0.85
-    context_phrases:
+    context:
       - "CNPJ"
       - "cadastro nacional da pessoa jurídica"
       - "empresa"
       - "razão social"
-    language: "pt"
 
   - name: "BR_RG_Recognizer"
-    entity_type: "BR_RG"
+    supported_entity: "BR_RG"
+    supported_language: "pt"
     patterns:
       - name: "RG with X digit"
         regex: "\\d{1,2}\\.?\\d{3}\\.?\\d{3}-[\\dXx]"
@@ -35,31 +39,31 @@ recognizers:
       - name: "RG with state prefix"
         regex: "(?i)RG\\s*:?\\s*\\d{1,2}\\.?\\d{3}\\.?\\d{3}-?[\\dXx]"
         score: 0.75
-    context_phrases:
+    context:
       - "RG"
       - "registro geral"
       - "identidade"
       - "carteira de identidade"
       - "documento de identidade"
-    language: "pt"
 
   - name: "BR_CEP_Recognizer"
-    entity_type: "BR_CEP"
+    supported_entity: "BR_CEP"
+    supported_language: "pt"
     patterns:
       - name: "CEP with hyphen"
         regex: "\\d{5}-\\d{3}"
         score: 0.5
-    context_phrases:
+    context:
       - "CEP"
       - "código de endereçamento postal"
       - "endereço"
       - "logradouro"
       - "bairro"
       - "cidade"
-    language: "pt"
 
   - name: "BR_PHONE_Recognizer"
-    entity_type: "BR_PHONE"
+    supported_entity: "BR_PHONE"
+    supported_language: "pt"
     patterns:
       - name: "Phone with country code and parentheses"
         regex: "(?:\\+55|55)\\s*\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
@@ -70,11 +74,10 @@ recognizers:
       - name: "Phone plain digits 10 or 11"
         regex: "(?<=\\D)\\d{10,11}(?=\\D)"
         score: 0.3
-    context_phrases:
+    context:
       - "telefone"
       - "celular"
       - "fone"
       - "whatsapp"
       - "tel"
       - "ligar"
-    language: "pt"
