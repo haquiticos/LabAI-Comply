@@ -49,6 +49,8 @@ services:
       - labai_net
     environment:
       - ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
+      - RECOGNIZER_REGISTRY_CONF_FILE=/usr/share/presidio/recognizers.yml
+      - NLP_CONF_FILE=/usr/share/presidio/nlp.yml
     deploy:
       resources:
         limits:
@@ -60,6 +62,8 @@ services:
       retries: 3
     volumes:
       - /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
+      - /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml:ro
+      - /opt/labai/presidio/nlp.yml:/usr/share/presidio/nlp.yml:ro
 
   presidio-anonymizer:
     image: mcr.microsoft.com/presidio-anonymizer:latest

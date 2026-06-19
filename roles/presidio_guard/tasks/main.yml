@@ -29,12 +29,28 @@
   register: _presidio_build
   tags: [presidio]
 
-- name: Template unified Presidio analyzer configuration
+- name: Template Presidio analyzer engine configuration
   ansible.builtin.template:
     src: presidio_analyzer.yml.j2
     dest: /opt/labai/presidio/analyzer.yml
     mode: "0644"
   register: _presidio_analyzer_conf
+  tags: [presidio]
+
+- name: Template Presidio recognizer registry configuration
+  ansible.builtin.template:
+    src: presidio_recognizers.yml.j2
+    dest: /opt/labai/presidio/recognizers.yml
+    mode: "0644"
+  register: _presidio_recognizers_conf
+  tags: [presidio]
+
+- name: Template Presidio NLP engine configuration
+  ansible.builtin.template:
+    src: presidio_nlp.yml.j2
+    dest: /opt/labai/presidio/nlp.yml
+    mode: "0644"
+  register: _presidio_nlp_conf
   tags: [presidio]
 
 - name: Check if Presidio Analyzer container is running
@@ -45,12 +61,12 @@
   changed_when: false
   tags: [presidio]
 
-- name: Recreate Presidio Analyzer container when configuration changes
+- name: Recreate Presidio Analyzer container when any configuration changes
   ansible.builtin.shell: >
     docker rm -f {{ presidio_analyzer_container }}
   when:
     - _presidio_analyzer_status.stdout != ""
-    - _presidio_analyzer_conf is changed
+    - _presidio_analyzer_conf.changed or _presidio_recognizers_conf.changed or _presidio_nlp_conf.changed
   tags: [presidio]
 
 - name: Deploy Presidio Analyzer container
@@ -61,14 +77,22 @@
     --restart unless-stopped
     --memory {{ presidio_memory_limit }}
     -v /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
+    -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml:ro
+    -v /opt/labai/presidio/nlp.yml:/usr/share/presidio/nlp.yml:ro
     --health-cmd "curl -f http://localhost:3000/health"
     --health-interval 30s
     --health-timeout 10s
     --health-retries 3
     -p 5002:3000
     -e ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
+    -e RECOGNIZER_REGISTRY_CONF_FILE=/usr/share/presidio/recognizers.yml
+    -e NLP_CONF_FILE=/usr/share/presidio/nlp.yml
     presidio-analyzer-pt
-  when: _presidio_analyzer_status.stdout == "" or _presidio_analyzer_conf is changed
+  when: >
+    _presidio_analyzer_status.stdout == ""
+    or _presidio_analyzer_conf.changed
+    or _presidio_recognizers_conf.changed
+    or _presidio_nlp_conf.changed
   tags: [presidio]
 
 - name: Check if Presidio Anonymizer container is running

@@ -1,110 +1,15 @@
 ---
-# Presidio Analyzer unified configuration.
+# Presidio Analyzer engine configuration.
 # Mounted at /usr/share/presidio/analyzer.yml and referenced via ANALYZER_CONF_FILE.
 #
-# Why unified (and not RECOGNIZER_REGISTRY_CONF_FILE):
-# AnalyzerEngineProvider._load_recognizer_registry only propagates 
-# supported_languages from the analyzer section to the registry section
-# when the registry is declared inline under `recognizer_registry:`.
-# A standalone RECOGNIZER_REGISTRY_CONF_FILE receives supported_languages=None,
-# and RecognizerListLoader._is_language_supported_globally then runs
-#   `recognizer.supported_language not in None`
-# which raises `TypeError: argument of type 'NoneType' is not iterable`
-# immediately after all custom recognizers log "Loaded recognizer: ...".
-#
-# Format reference:
-# https://github.com/microsoft/presidio/blob/main/presidio-analyzer/presidio_analyzer/conf/example_recognizers.yaml
+# This file sets ONLY the analyzer-engine-level knobs (supported_languages and
+# default_score_threshold). The MCR :latest image bundles a Presidio version
+# whose AnalyzerEngineProvider does NOT inline-process `nlp_configuration` and
+# `recognizer_registry` sections declared in this file — those have to be
+# supplied as separate files via NLP_CONF_FILE and RECOGNIZER_REGISTRY_CONF_FILE.
+# See roles/presidio_guard/templates/presidio_nlp.yml.j2 and
+# presidio_recognizers.yml.j2.
 supported_languages:
   - en
   - pt
 default_score_threshold: {{ presidio_score_threshold | default(0) }}
-
-nlp_configuration:
-  nlp_engine_name: spacy
-  models:
-    - lang_code: en
-      model_name: en_core_web_sm
-    - lang_code: pt
-      model_name: pt_core_news_sm
-
-recognizer_registry:
-  global_regex_flags: 26
-  recognizers:
-    - name: "BR_CPF_Recognizer"
-      supported_language: "pt"
-      supported_entity: "BR_CPF"
-      patterns:
-        - name: "CPF with separators"
-          regex: "\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}"
-          score: 0.85
-      context:
-        - "CPF"
-        - "cadastro de pessoa física"
-        - "número de CPF"
-        - "inscrição"
-
-    - name: "BR_CNPJ_Recognizer"
-      supported_language: "pt"
-      supported_entity: "BR_CNPJ"
-      patterns:
-        - name: "CNPJ with separators"
-          regex: "\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
-          score: 0.85
-      context:
-        - "CNPJ"
-        - "cadastro nacional da pessoa jurídica"
-        - "empresa"
-        - "razão social"
-
-    - name: "BR_RG_Recognizer"
-      supported_language: "pt"
-      supported_entity: "BR_RG"
-      patterns:
-        - name: "RG with X digit"
-          regex: "\\d{1,2}\\.?\\d{3}\\.?\\d{3}-[\\dXx]"
-          score: 0.65
-        - name: "RG with state prefix"
-          regex: "(?i)RG\\s*:?\\s*\\d{1,2}\\.?\\d{3}\\.?\\d{3}-?[\\dXx]"
-          score: 0.75
-      context:
-        - "RG"
-        - "registro geral"
-        - "identidade"
-        - "carteira de identidade"
-        - "documento de identidade"
-
-    - name: "BR_CEP_Recognizer"
-      supported_language: "pt"
-      supported_entity: "BR_CEP"
-      patterns:
-        - name: "CEP with hyphen"
-          regex: "\\d{5}-\\d{3}"
-          score: 0.5
-      context:
-        - "CEP"
-        - "código de endereçamento postal"
-        - "endereço"
-        - "logradouro"
-        - "bairro"
-        - "cidade"
-
-    - name: "BR_PHONE_Recognizer"
-      supported_language: "pt"
-      supported_entity: "BR_PHONE"
-      patterns:
-        - name: "Phone with country code and parentheses"
-          regex: "(?:\\+55|55)\\s*\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
-          score: 0.75
-        - name: "Phone with parentheses no country code"
-          regex: "\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
-          score: 0.5
-        - name: "Phone plain digits 10 or 11"
-          regex: "(?<=\\D)\\d{10,11}(?=\\D)"
-          score: 0.3
-      context:
-        - "telefone"
-        - "celular"
-        - "fone"
-        - "whatsapp"
-        - "tel"
-        - "ligar"
