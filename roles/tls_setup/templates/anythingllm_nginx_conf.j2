@@ -1,6 +1,7 @@
+{# default('_', true) also covers labai_domain == "" (self-signed mode), which default('_') does not. #}
 server {
     listen 80;
-    server_name {{ labai_domain | default('_') }};
+    server_name {{ labai_domain | default('_', true) }};
 
     location / {
         return 301 https://$host$request_uri;
@@ -9,7 +10,7 @@ server {
 
 server {
     listen 443 ssl;
-    server_name {{ labai_domain | default('_') }};
+    server_name {{ labai_domain | default('_', true) }};
 
     ssl_certificate {{ tls_cert_path }};
     ssl_certificate_key {{ tls_key_path }};
