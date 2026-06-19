@@ -9,30 +9,55 @@
 - name: Install Docker prerequisites
   become: true
   ansible.builtin.apt:
-    name: "{{ item }}"
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
     state: present
     update_cache: true
-  loop:
-    - apt-transport-https
-    - ca-certificates
-    - curl
-    - gnupg
-    - lsb-release
   when: _docker_check.rc != 0
   tags: [system]
 
-- name: Add Docker GPG key
+# Docker GPG key handling modernizada para o padrao /etc/apt/keyrings + signed-by=.
+# O modulo apt_key depende do binario `apt-key`, deprecado desde Debian 11/Ubuntu 22.04
+# e removido em versoes recentes (Ubuntu 24.10+, Debian 13). O caminho abaixo funciona
+# em todas as versoes suportadas (Ubuntu 22.04+ / Debian 11+) sem depender do apt-key.
+- name: Map system architecture to Docker apt arch
+  ansible.builtin.set_fact:
+    _docker_apt_arch: >-
+      {{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armhf'}[ansible_architecture] | default('amd64') }}
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Ensure /etc/apt/keyrings directory exists
   become: true
-  ansible.builtin.apt_key:
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  when: _docker_check.rc != 0
+  tags: [system]
+
+- name: Download Docker GPG key (ASCII-armored, signed-by compatible)
+  become: true
+  ansible.builtin.get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
-    state: present
+    dest: /etc/apt/keyrings/docker.asc
+    mode: "0644"
+    owner: root
+    group: root
+    force: true
   when: _docker_check.rc != 0
   tags: [system]
 
 - name: Add Docker repository
   become: true
   ansible.builtin.apt_repository:
-    repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    repo: "deb [arch={{ _docker_apt_arch }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
     state: present
     filename: docker
   when: _docker_check.rc != 0
