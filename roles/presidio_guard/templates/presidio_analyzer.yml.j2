@@ -3,7 +3,7 @@
 # Mounted at /usr/share/presidio/analyzer.yml and referenced via ANALYZER_CONF_FILE.
 #
 # Why unified (and not RECOGNIZER_REGISTRY_CONF_FILE):
-# AnalyzerEngineProvider._load_recognizer_registry only propagates
+# AnalyzerEngineProvider._load_recognizer_registry only propagates 
 # supported_languages from the analyzer section to the registry section
 # when the registry is declared inline under `recognizer_registry:`.
 # A standalone RECOGNIZER_REGISTRY_CONF_FILE receives supported_languages=None,
