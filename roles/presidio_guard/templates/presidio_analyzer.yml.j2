@@ -1,0 +1,15 @@
+---
+# Presidio Analyzer engine configuration.
+# Mounted at /usr/share/presidio/analyzer.yml and referenced via ANALYZER_CONF_FILE.
+#
+# This file sets ONLY the analyzer-engine-level knobs (supported_languages and
+# default_score_threshold). The MCR :latest image bundles a Presidio version
+# whose AnalyzerEngineProvider does NOT inline-process `nlp_configuration` and
+# `recognizer_registry` sections declared in this file — those have to be
+# supplied as separate files via NLP_CONF_FILE and RECOGNIZER_REGISTRY_CONF_FILE.
+# See roles/presidio_guard/templates/presidio_nlp.yml.j2 and
+# presidio_recognizers.yml.j2.
+supported_languages:
+  - en
+  - pt
+default_score_threshold: {{ presidio_score_threshold | default(0) }}

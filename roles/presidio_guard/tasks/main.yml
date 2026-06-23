@@ -29,11 +29,28 @@
   register: _presidio_build
   tags: [presidio]
 
-- name: Template custom recognizers config
+- name: Template Presidio analyzer engine configuration
+  ansible.builtin.template:
+    src: presidio_analyzer.yml.j2
+    dest: /opt/labai/presidio/analyzer.yml
+    mode: "0644"
+  register: _presidio_analyzer_conf
+  tags: [presidio]
+
+- name: Template Presidio recognizer registry configuration
   ansible.builtin.template:
     src: presidio_recognizers.yml.j2
     dest: /opt/labai/presidio/recognizers.yml
     mode: "0644"
+  register: _presidio_recognizers_conf
+  tags: [presidio]
+
+- name: Template Presidio NLP engine configuration
+  ansible.builtin.template:
+    src: presidio_nlp.yml.j2
+    dest: /opt/labai/presidio/nlp.yml
+    mode: "0644"
+  register: _presidio_nlp_conf
   tags: [presidio]
 
 - name: Check if Presidio Analyzer container is running
@@ -44,6 +61,14 @@
   changed_when: false
   tags: [presidio]
 
+- name: Recreate Presidio Analyzer container when any configuration changes
+  ansible.builtin.shell: >
+    docker rm -f {{ presidio_analyzer_container }}
+  when:
+    - _presidio_analyzer_status.stdout != ""
+    - _presidio_analyzer_conf.changed or _presidio_recognizers_conf.changed or _presidio_nlp_conf.changed
+  tags: [presidio]
+
 - name: Deploy Presidio Analyzer container
   ansible.builtin.shell: >
     docker run -d
@@ -51,15 +76,23 @@
     --network labai_net
     --restart unless-stopped
     --memory {{ presidio_memory_limit }}
-    -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+    -v /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
+    -v /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml:ro
+    -v /opt/labai/presidio/nlp.yml:/usr/share/presidio/nlp.yml:ro
     --health-cmd "curl -f http://localhost:3000/health"
     --health-interval 30s
     --health-timeout 10s
     --health-retries 3
     -p 5002:3000
-    -e PRESIDIO_LANGUAGE={{ presidio_language }}
+    -e ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
+    -e RECOGNIZER_REGISTRY_CONF_FILE=/usr/share/presidio/recognizers.yml
+    -e NLP_CONF_FILE=/usr/share/presidio/nlp.yml
     presidio-analyzer-pt
-  when: _presidio_analyzer_status.stdout == ""
+  when: >
+    _presidio_analyzer_status.stdout == ""
+    or _presidio_analyzer_conf.changed
+    or _presidio_recognizers_conf.changed
+    or _presidio_nlp_conf.changed
   tags: [presidio]
 
 - name: Check if Presidio Anonymizer container is running
@@ -82,6 +115,7 @@
     --health-timeout 10s
     --health-retries 3
     -p 5001:5001
+    -e PORT=5001
     {{ presidio_anonymizer_image }}
   when: _presidio_anonymizer_status.stdout == ""
   tags: [presidio]
@@ -96,15 +130,20 @@
   delay: 5
   tags: [presidio]
 
-- name: Register custom Brazilian PII recognizers
-  ansible.builtin.script: register_presidio_recognizers.py http://localhost:5002 /opt/labai/presidio/recognizers.yml
-  register: _recognizer_registration
-  changed_when: "'Registered' in _recognizer_registration.stdout"
+- name: Verify again custom recognizers loaded from mounted YAML
+  ansible.builtin.uri:
+    url: "http://localhost:5002/recognizers?language={{ presidio_language }}"
+    method: GET
+    return_content: true
+  register: _loaded_recognizers
+  retries: 5
+  delay: 3
+  failed_when: "'BR_CPF_Recognizer' not in (_loaded_recognizers.content | string)"
   tags: [presidio]
 
-- name: Display recognizer registration result
+- name: Display loaded custom recognizers
   ansible.builtin.debug:
-    msg: "{{ _recognizer_registration.stdout_lines }}"
+    msg: "Loaded recognizers: {{ (_loaded_recognizers.content | from_json).names | default([]) }}"
   tags: [presidio]
 
 - name: Verify Presidio Analyzer connectivity

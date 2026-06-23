@@ -1,33 +1,60 @@
 ---
+# Presidio Analyzer recognizer registry configuration.
+# Mounted at /usr/share/presidio/recognizers.yml and referenced via
+# RECOGNIZER_REGISTRY_CONF_FILE.
+#
+# WHY the top-level `supported_languages` is REQUIRED here:
+# When this file is loaded via RECOGNIZER_REGISTRY_CONF_FILE, the
+# AnalyzerEngineProvider does NOT propagate analyzer.supported_languages into
+# the standalone registry config. Without a top-level `supported_languages`,
+# the Pydantic validator returns None, and RecognizerListLoader runs
+#   `_is_language_supported_globally(recognizer, None)`
+# which evaluates `recognizer.supported_language not in None` and raises
+#   `TypeError: argument of type 'NoneType' is not iterable`
+# immediately AFTER every recognizer logs "Loaded recognizer: ..." (the
+# language filter is post-instantiation, which is why all 5 BR recognizers
+# appear to load successfully and then the worker crashes).
+#
+# This value MUST include every language any recognizer declares in its
+# `supported_language:` field below — otherwise those recognizers get
+# silently dropped by the same filter (with only a WARNING in the logs).
+supported_languages:
+  - en
+  - pt
+
+# re.DOTALL | re.MULTILINE | re.IGNORECASE = 26
+global_regex_flags: 26
+
 recognizers:
   - name: "BR_CPF_Recognizer"
-    entity_type: "BR_CPF"
+    supported_language: "pt"
+    supported_entity: "BR_CPF"
     patterns:
       - name: "CPF with separators"
         regex: "\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}"
         score: 0.85
-    context_phrases:
+    context:
       - "CPF"
       - "cadastro de pessoa física"
       - "número de CPF"
       - "inscrição"
-    language: "pt"
 
   - name: "BR_CNPJ_Recognizer"
-    entity_type: "BR_CNPJ"
+    supported_language: "pt"
+    supported_entity: "BR_CNPJ"
     patterns:
       - name: "CNPJ with separators"
         regex: "\\d{2}\\.\\d{3}\\.\\d{3}/\\d{4}-\\d{2}"
         score: 0.85
-    context_phrases:
+    context:
       - "CNPJ"
       - "cadastro nacional da pessoa jurídica"
       - "empresa"
       - "razão social"
-    language: "pt"
 
   - name: "BR_RG_Recognizer"
-    entity_type: "BR_RG"
+    supported_language: "pt"
+    supported_entity: "BR_RG"
     patterns:
       - name: "RG with X digit"
         regex: "\\d{1,2}\\.?\\d{3}\\.?\\d{3}-[\\dXx]"
@@ -35,31 +62,31 @@ recognizers:
       - name: "RG with state prefix"
         regex: "(?i)RG\\s*:?\\s*\\d{1,2}\\.?\\d{3}\\.?\\d{3}-?[\\dXx]"
         score: 0.75
-    context_phrases:
+    context:
       - "RG"
       - "registro geral"
       - "identidade"
       - "carteira de identidade"
       - "documento de identidade"
-    language: "pt"
 
   - name: "BR_CEP_Recognizer"
-    entity_type: "BR_CEP"
+    supported_language: "pt"
+    supported_entity: "BR_CEP"
     patterns:
       - name: "CEP with hyphen"
         regex: "\\d{5}-\\d{3}"
         score: 0.5
-    context_phrases:
+    context:
       - "CEP"
       - "código de endereçamento postal"
       - "endereço"
       - "logradouro"
       - "bairro"
       - "cidade"
-    language: "pt"
 
   - name: "BR_PHONE_Recognizer"
-    entity_type: "BR_PHONE"
+    supported_language: "pt"
+    supported_entity: "BR_PHONE"
     patterns:
       - name: "Phone with country code and parentheses"
         regex: "(?:\\+55|55)\\s*\\(?\\d{2}\\)?\\s*\\d{4,5}-?\\d{4}"
@@ -70,11 +97,10 @@ recognizers:
       - name: "Phone plain digits 10 or 11"
         regex: "(?<=\\D)\\d{10,11}(?=\\D)"
         score: 0.3
-    context_phrases:
+    context:
       - "telefone"
       - "celular"
       - "fone"
       - "whatsapp"
       - "tel"
       - "ligar"
-    language: "pt"

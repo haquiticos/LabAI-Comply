@@ -48,7 +48,9 @@ services:
     networks:
       - labai_net
     environment:
-      - PRESIDIO_LANGUAGE={{ presidio_language | default('pt') }}
+      - ANALYZER_CONF_FILE=/usr/share/presidio/analyzer.yml
+      - RECOGNIZER_REGISTRY_CONF_FILE=/usr/share/presidio/recognizers.yml
+      - NLP_CONF_FILE=/usr/share/presidio/nlp.yml
     deploy:
       resources:
         limits:
@@ -59,7 +61,9 @@ services:
       timeout: 10s
       retries: 3
     volumes:
-      - /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml
+      - /opt/labai/presidio/analyzer.yml:/usr/share/presidio/analyzer.yml:ro
+      - /opt/labai/presidio/recognizers.yml:/usr/share/presidio/recognizers.yml:ro
+      - /opt/labai/presidio/nlp.yml:/usr/share/presidio/nlp.yml:ro
 
   presidio-anonymizer:
     image: mcr.microsoft.com/presidio-anonymizer:latest
@@ -134,6 +138,8 @@ services:
         limits:
           memory: {{ anythingllm_memory_limit | default('4g') }}
     environment:
+      # STORAGE_DIR must match the volume mount; absence crashes the app.
+      - STORAGE_DIR=/app/server/storage
       - OPEN_AI_KEY=
       - OPENAI_API_BASE_URL=http://gateway:8000/cloud
       - EMBEDDING_ENGINE=local

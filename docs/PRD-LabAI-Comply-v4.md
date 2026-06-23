@@ -364,7 +364,7 @@ labai_comply/
 │   ├── docker-compose.yml.j2
 │   ├── gateway_main_py.j2
 │   ├── gateway_workspace_registry_yml.j2   # NOVO: workspace → finalidade mapping
-│   ├── presidio_recognizers.yml.j2
+│   ├── presidio_analyzer.yml.j2
 │   ├── audit_script.sh.j2
 │   ├── anythingllm_nginx_conf.j2
 │   └── backup_script.sh.j2

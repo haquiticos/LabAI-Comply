@@ -6,8 +6,13 @@
   ansible.builtin.file:
     path: "{{ anythingllm_storage_path }}"
     state: directory
-    owner: root
-    group: root
+    # The mintplexlabs/anythingllm image runs as uid/gid 1000 (user
+    # "anythingllm"). Owning the storage mount as root makes Prisma fail with
+    # "unable to open database file: ../storage/anythingllm.db" because SQLite
+    # cannot create the -wal/-shm sidecar files in a root-only directory, which
+    # puts the container in a restart loop.
+    owner: 1000
+    group: 1000
     mode: "0755"
   tags: [anythingllm]
 
@@ -33,6 +38,15 @@
     volumes:
       - "{{ anythingllm_storage_path }}:/app/server/storage"
     env:
+      # STORAGE_DIR is required by the AnythingLLM entrypoint; without it
+      # the app crashes with ERR_INVALID_ARG_TYPE at path.resolve(undefined)
+      # and the container enters a restart loop. Must match the volume mount.
+      STORAGE_DIR: "/app/server/storage"
+      # mintplexlabs/anythingllm:latest defaults SERVER_PORT to 3001 (see
+      # server/index.js: `process.env.SERVER_PORT || 3001`). Without this
+      # override the HTTP server listens on 3001 while we publish 3000:3000,
+      # so the UI and /api/system healthcheck never answer.
+      SERVER_PORT: "3000"
       OPEN_AI_KEY: ""
       OPENAI_API_BASE_URL: "http://gateway:8000/cloud"
       EMBEDDING_ENGINE: "local"
