@@ -497,13 +497,18 @@ async def health():
     overall = "healthy"
 
     # Check Ollama
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.get("http://ollama:11434/api/tags")
-            checks["ollama"] = "up" if resp.status_code == 200 else "degraded"
-    except Exception:
-        checks["ollama"] = "down"
-        overall = "degraded"
+    if os.environ.get("OLLAMA_DISABLED", "").lower() in ("1", "true", "yes"):
+        # Cloud-only deployment (skip_ollama=true): ollama is intentionally
+        # absent, so its absence must NOT degrade the gateway health.
+        checks["ollama"] = "disabled"
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get("http://ollama:11434/api/tags")
+                checks["ollama"] = "up" if resp.status_code == 200 else "degraded"
+        except Exception:
+            checks["ollama"] = "down"
+            overall = "degraded"
 
     # Check Presidio Analyzer
     try:

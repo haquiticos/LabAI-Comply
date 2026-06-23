@@ -115,6 +115,7 @@
     --health-timeout 10s
     --health-retries 3
     -p 5001:5001
+    -e PORT=5001
     {{ presidio_anonymizer_image }}
   when: _presidio_anonymizer_status.stdout == ""
   tags: [presidio]

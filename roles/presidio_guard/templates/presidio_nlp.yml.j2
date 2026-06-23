@@ -3,15 +3,18 @@
 # Mounted at /usr/share/presidio/nlp.yml and referenced via NLP_CONF_FILE.
 #
 # Loads both English (ships with the mcr.microsoft.com/presidio-analyzer base
-# image) and Portuguese (installed by /opt/labai/presidio/Dockerfile via
-# `python -m spacy download pt_core_news_sm`) spaCy models. Without the pt
-# model, spaCy silently falls back to en_core_web_sm for pt requests and the
+# image as en_core_web_lg) and Portuguese (installed by /opt/labai/presidio/
+# Dockerfile via `python -m spacy download pt_core_news_sm`) spaCy models.
+# NOTE: the base image bundles en_core_web_lg, NOT en_core_web_sm. Pointing
+# this entry at en_core_web_sm makes the NlpEngineProvider raise E050 on the
+# first request, which stalls gunicorn's sync worker and makes /health hang
+# forever. Without the pt model, spaCy silently falls back to English and the
 # LemmaContextAwareEnhancer cannot lemmatize Portuguese context words ("CPF",
 # "telefone", "razão social"...) — context-boosting becomes a no-op even when
 # the regex patterns themselves match.
 nlp_engine_name: spacy
 models:
   - lang_code: en
-    model_name: en_core_web_sm
+    model_name: en_core_web_lg
   - lang_code: pt
     model_name: pt_core_news_sm
