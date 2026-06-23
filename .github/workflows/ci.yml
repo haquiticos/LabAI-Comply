@@ -70,7 +70,7 @@ jobs:
         run: |
           # Strip Jinja2 delimiters to get lintable Python, then run ruff
           sed -E 's/\{\{.+}}//g; s/\{%[^%]+%}//g; s/\{#.+#}//g' \
-            templates/gateway_main_py.j2 > /tmp/gateway_extracted.py
+            roles/fastapi_gateway/templates/gateway_main_py.j2 > /tmp/gateway_extracted.py
           ruff check /tmp/gateway_extracted.py --ignore E999,F401,F841 \
             --select E,W,F --line-length 120 || true
           echo "::notice::Python lint of gateway template completed (non-blocking)"
